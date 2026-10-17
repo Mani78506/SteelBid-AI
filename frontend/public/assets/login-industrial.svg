@@ -1,0 +1,206 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1440 900" preserveAspectRatio="xMidYMid slice">
+  <defs>
+    <!-- Sky: deep navy upper-left → warm amber sunset right -->
+    <linearGradient id="sky" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0a1628"/>
+      <stop offset="0.35" stop-color="#16233d"/>
+      <stop offset="0.6" stop-color="#3d3a55"/>
+      <stop offset="0.82" stop-color="#a8623a"/>
+      <stop offset="1" stop-color="#e8a558"/>
+    </linearGradient>
+    <!-- Sun glow -->
+    <radialGradient id="sun" cx="0.72" cy="0.62" r="0.45">
+      <stop offset="0" stop-color="#ffd98a" stop-opacity="0.95"/>
+      <stop offset="0.35" stop-color="#f7b259" stop-opacity="0.55"/>
+      <stop offset="1" stop-color="#f7b259" stop-opacity="0"/>
+    </radialGradient>
+    <!-- Ground haze reflection -->
+    <linearGradient id="ground" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#0b1626"/>
+      <stop offset="0.55" stop-color="#1a2233"/>
+      <stop offset="0.85" stop-color="#5a4430"/>
+      <stop offset="1" stop-color="#8a6238"/>
+    </linearGradient>
+    <!-- Warm reflection streaks -->
+    <linearGradient id="reflect" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#f0b060" stop-opacity="0.55"/>
+      <stop offset="1" stop-color="#f0b060" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="beamFace" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2a3648"/>
+      <stop offset="1" stop-color="#101a2a"/>
+    </linearGradient>
+    <radialGradient id="coil" cx="0.42" cy="0.38" r="0.75">
+      <stop offset="0" stop-color="#4a5a72"/>
+      <stop offset="0.55" stop-color="#2b3a50"/>
+      <stop offset="1" stop-color="#141f30"/>
+    </radialGradient>
+  </defs>
+
+  <!-- Sky -->
+  <rect width="1440" height="900" fill="url(#sky)"/>
+  <rect width="1440" height="900" fill="url(#sun)"/>
+
+  <!-- Sun disc -->
+  <circle cx="1037" cy="560" r="42" fill="#ffe4ae" opacity="0.9"/>
+  <circle cx="1037" cy="560" r="70" fill="#ffd98a" opacity="0.28"/>
+
+  <!-- Distant skyline -->
+  <g fill="#1c2a44" opacity="0.55">
+    <rect x="0" y="505" width="60" height="130"/>
+    <rect x="70" y="480" width="45" height="155"/>
+    <rect x="125" y="510" width="70" height="125"/>
+    <rect x="205" y="470" width="38" height="165"/>
+    <rect x="880" y="500" width="55" height="135"/>
+    <rect x="945" y="465" width="42" height="170"/>
+    <rect x="995" y="495" width="65" height="140"/>
+    <rect x="1070" y="515" width="50" height="120"/>
+    <rect x="1330" y="480" width="45" height="155"/>
+    <rect x="1385" y="510" width="55" height="125"/>
+  </g>
+
+  <!-- Tower cranes (background layer) -->
+  <g stroke="#141f33" stroke-width="7" fill="none" opacity="0.85" stroke-linecap="round">
+    <!-- crane 1 left-center -->
+    <line x1="560" y1="610" x2="560" y2="215"/>
+    <line x1="445" y1="235" x2="700" y2="235"/>
+    <line x1="560" y1="215" x2="445" y2="235"/>
+    <line x1="560" y1="215" x2="700" y2="235"/>
+    <line x1="468" y1="235" x2="468" y2="300"/>
+    <!-- crane 2 far -->
+    <line x1="1240" y1="600" x2="1240" y2="250" opacity="0.7"/>
+    <line x1="1150" y1="268" x2="1350" y2="268" opacity="0.7"/>
+    <line x1="1240" y1="250" x2="1150" y2="268" opacity="0.7"/>
+    <line x1="1240" y1="250" x2="1350" y2="268" opacity="0.7"/>
+  </g>
+  <!-- crane jib lights -->
+  <circle cx="700" cy="235" r="4" fill="#ff9d5c"/>
+  <circle cx="1350" cy="268" r="4" fill="#ff9d5c" opacity="0.8"/>
+  <!-- hanging hook blocks -->
+  <rect x="462" y="300" width="12" height="18" fill="#141f33"/>
+  <rect x="1305" y="268" width="10" height="16" fill="#141f33" opacity="0.75"/>
+
+  <!-- Viaduct piers -->
+  <g fill="#22304c">
+    <rect x="760" y="560" width="34" height="130" rx="4"/>
+    <rect x="905" y="560" width="34" height="130" rx="4"/>
+    <rect x="1050" y="560" width="34" height="130" rx="4"/>
+    <rect x="1195" y="560" width="34" height="130" rx="4"/>
+    <rect x="1340" y="560" width="34" height="130" rx="4"/>
+  </g>
+  <!-- Viaduct deck -->
+  <rect x="700" y="540" width="740" height="26" rx="6" fill="#2b3b58"/>
+  <rect x="700" y="540" width="740" height="8" rx="4" fill="#3a4e72"/>
+
+  <!-- Train on viaduct -->
+  <g>
+    <rect x="860" y="486" width="230" height="48" rx="16" fill="#31415e"/>
+    <rect x="860" y="494" width="230" height="14" fill="#24324c"/>
+    <!-- lit windows -->
+    <g fill="#f7c96a">
+      <rect x="880" y="500" width="26" height="14" rx="3"/>
+      <rect x="916" y="500" width="26" height="14" rx="3"/>
+      <rect x="952" y="500" width="26" height="14" rx="3"/>
+      <rect x="988" y="500" width="26" height="14" rx="3"/>
+      <rect x="1024" y="500" width="26" height="14" rx="3"/>
+    </g>
+    <rect x="1058" y="492" width="28" height="36" rx="8" fill="#41557c"/>
+    <rect x="860" y="520" width="230" height="8" rx="4" fill="#1d2a42"/>
+    <!-- second car -->
+    <rect x="1092" y="492" width="190" height="42" rx="14" fill="#2b3a56"/>
+    <g fill="#e8bc5f" opacity="0.9">
+      <rect x="1108" y="501" width="24" height="13" rx="3"/>
+      <rect x="1142" y="501" width="24" height="13" rx="3"/>
+      <rect x="1176" y="501" width="24" height="13" rx="3"/>
+      <rect x="1210" y="501" width="24" height="13" rx="3"/>
+    </g>
+  </g>
+
+  <!-- Ground -->
+  <rect x="0" y="635" width="1440" height="265" fill="url(#ground)"/>
+  <!-- warm light pools on ground -->
+  <ellipse cx="1050" cy="700" rx="380" ry="40" fill="url(#reflect)" opacity="0.5"/>
+  <ellipse cx="780" cy="760" rx="520" ry="55" fill="url(#reflect)" opacity="0.28"/>
+
+  <!-- Scaffolding / structure under construction, left-center -->
+  <g stroke="#1a2740" stroke-width="5" opacity="0.9">
+    <line x1="330" y1="640" x2="330" y2="380"/>
+    <line x1="430" y1="640" x2="430" y2="400"/>
+    <line x1="530" y1="640" x2="530" y2="420"/>
+    <line x1="315" y1="420" x2="560" y2="420"/>
+    <line x1="315" y1="480" x2="560" y2="480"/>
+    <line x1="315" y1="540" x2="560" y2="540"/>
+    <line x1="330" y1="380" x2="430" y2="480" stroke-width="3"/>
+    <line x1="430" y1="400" x2="530" y2="500" stroke-width="3"/>
+    <line x1="430" y1="480" x2="330" y2="380" stroke-width="3"/>
+    <line x1="530" y1="500" x2="430" y2="400" stroke-width="3"/>
+  </g>
+  <rect x="300" y="640" width="280" height="14" fill="#16223a"/>
+
+  <!-- Tiny worker silhouettes -->
+  <g fill="#0f1a2e">
+    <circle cx="640" cy="620" r="6"/>
+    <rect x="635" y="626" width="10" height="20" rx="4"/>
+    <circle cx="700" cy="628" r="6"/>
+    <rect x="695" y="634" width="10" height="18" rx="4"/>
+  </g>
+  <circle cx="640" cy="618" r="7" fill="#e8a558" opacity="0.85"/>
+  <circle cx="700" cy="626" r="7" fill="#e8a558" opacity="0.85"/>
+
+  <!-- Truck silhouette -->
+  <g fill="#14203a">
+    <rect x="720" y="600" width="120" height="34" rx="5"/>
+    <rect x="838" y="610" width="34" height="24" rx="5"/>
+    <circle cx="748" cy="638" r="11"/>
+    <circle cx="818" cy="638" r="11"/>
+    <circle cx="858" cy="638" r="11"/>
+  </g>
+  <rect x="842" y="614" width="24" height="12" rx="3" fill="#f0c168" opacity="0.9"/>
+
+  <!-- Foreground I-beams (left) -->
+  <g>
+    <rect x="-30" y="700" width="330" height="34" rx="4" fill="url(#beamFace)"/>
+    <rect x="-30" y="700" width="330" height="8" fill="#3a4c68"/>
+    <rect x="-10" y="745" width="300" height="32" rx="4" fill="url(#beamFace)"/>
+    <rect x="-10" y="745" width="300" height="7" fill="#34465f"/>
+    <rect x="-40" y="788" width="330" height="30" rx="4" fill="url(#beamFace)"/>
+    <rect x="-40" y="788" width="330" height="6" fill="#2e3f58"/>
+    <!-- upright column -->
+    <rect x="180" y="560" width="30" height="150" fill="url(#beamFace)"/>
+    <rect x="178" y="560" width="34" height="10" fill="#3a4c68"/>
+    <!-- angled brace -->
+    <g transform="rotate(18 250 800)">
+      <rect x="230" y="600" width="26" height="300" fill="url(#beamFace)"/>
+      <rect x="230" y="600" width="26" height="9" fill="#3a4c68"/>
+    </g>
+  </g>
+
+  <!-- Foreground steel coils (right) -->
+  <g>
+    <ellipse cx="1150" cy="760" rx="130" ry="120" fill="url(#coil)"/>
+    <ellipse cx="1150" cy="760" rx="52" ry="48" fill="#0d1524"/>
+    <ellipse cx="1150" cy="760" rx="130" ry="120" fill="none" stroke="#41536f" stroke-width="3" opacity="0.7"/>
+    <ellipse cx="1150" cy="760" rx="95" ry="88" fill="none" stroke="#33445e" stroke-width="4" opacity="0.8"/>
+    <ellipse cx="1150" cy="760" rx="72" ry="66" fill="none" stroke="#2a3a54" stroke-width="4" opacity="0.8"/>
+    <!-- warm rim light -->
+    <path d="M 1095 675 A 130 120 0 0 1 1245 720" stroke="#e8a558" stroke-width="5" fill="none" opacity="0.6" stroke-linecap="round"/>
+
+    <ellipse cx="1330" cy="800" rx="110" ry="100" fill="url(#coil)"/>
+    <ellipse cx="1330" cy="800" rx="44" ry="40" fill="#0d1524"/>
+    <ellipse cx="1330" cy="800" rx="110" ry="100" fill="none" stroke="#3b4d6a" stroke-width="3" opacity="0.7"/>
+    <ellipse cx="1330" cy="800" rx="78" ry="71" fill="none" stroke="#2e3f5a" stroke-width="4" opacity="0.8"/>
+    <path d="M 1285 730 A 110 100 0 0 1 1415 770" stroke="#e8a558" stroke-width="5" fill="none" opacity="0.55" stroke-linecap="round"/>
+  </g>
+
+  <!-- Flat steel sheets mid-right -->
+  <g fill="#1c2940">
+    <rect x="950" y="790" width="200" height="14" rx="3"/>
+    <rect x="960" y="806" width="180" height="12" rx="3"/>
+    <rect x="945" y="820" width="195" height="12" rx="3"/>
+  </g>
+  <rect x="950" y="790" width="200" height="4" fill="#31445f"/>
+
+  <!-- Atmospheric haze bottom -->
+  <rect x="0" y="620" width="1440" height="80" fill="#f0b060" opacity="0.05"/>
+  <rect x="0" y="0" width="520" height="900" fill="#0a1628" opacity="0.28"/>
+</svg>

@@ -7,7 +7,7 @@ test.describe("SteelBid AI — core flow", () => {
   test("login → command center renders live KPIs", async ({ page }) => {
     await page.goto("/login");
     await page.getByLabel("Work email").fill(EMAIL);
-    await page.getByLabel("Password").fill(PASSWORD);
+    await page.getByLabel("Password", { exact: true }).fill(PASSWORD);
     await page.getByRole("button", { name: "Sign in" }).click();
 
     await expect(page).toHaveURL(/\/$/);
@@ -21,7 +21,7 @@ test.describe("SteelBid AI — core flow", () => {
   test("navigation to materials shows seeded catalog", async ({ page }) => {
     await page.goto("/login");
     await page.getByLabel("Work email").fill(EMAIL);
-    await page.getByLabel("Password").fill(PASSWORD);
+    await page.getByLabel("Password", { exact: true }).fill(PASSWORD);
     await page.getByRole("button", { name: "Sign in" }).click();
     await expect(page).toHaveURL(/\/$/);
 
@@ -34,7 +34,7 @@ test.describe("SteelBid AI — core flow", () => {
     test.setTimeout(120_000);
     await page.goto("/login");
     await page.getByLabel("Work email").fill(EMAIL);
-    await page.getByLabel("Password").fill(PASSWORD);
+    await page.getByLabel("Password", { exact: true }).fill(PASSWORD);
     await page.getByRole("button", { name: "Sign in" }).click();
     await expect(page).toHaveURL(/\/$/);
 
@@ -56,7 +56,7 @@ test.describe("SteelBid AI — core flow", () => {
   test("organization switch changes dashboard scope", async ({ page }) => {
     await page.goto("/login");
     await page.getByLabel("Work email").fill("admin@railbuild.demo");
-    await page.getByLabel("Password").fill(PASSWORD);
+    await page.getByLabel("Password", { exact: true }).fill(PASSWORD);
     await page.getByRole("button", { name: "Sign in" }).click();
     await expect(page).toHaveURL(/\/$/);
 
@@ -71,7 +71,7 @@ test.describe("SteelBid AI — core flow", () => {
   test("logout returns to login", async ({ page }) => {
     await page.goto("/login");
     await page.getByLabel("Work email").fill(EMAIL);
-    await page.getByLabel("Password").fill(PASSWORD);
+    await page.getByLabel("Password", { exact: true }).fill(PASSWORD);
     await page.getByRole("button", { name: "Sign in" }).click();
     await expect(page).toHaveURL(/\/$/);
     await page.getByRole("button", { name: "User menu" }).click();
