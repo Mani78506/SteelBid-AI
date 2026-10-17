@@ -38,7 +38,7 @@ Last updated: 2026-10-17 (final verification pass)
 | Seed data (4 fictional companies) | ✅ | ran twice identical counts: 4 orgs / 11 users / 57 lots / 5 quotations / 30 price obs |
 | pytest suite | ✅ | **68 passed** (`pytest` in `backend/`, warnings only) |
 | Playwright e2e | ✅ | **5 passed** — login, live KPIs, materials, inquiry→quotation→sales order, org switch, logout |
-| Docker / Railway deployment config | ⚠️ | Dockerfiles + `docker-compose.yml` + `railway.toml` + `docs/deployment.md` written & statically reviewed; **Docker CLI not available on this machine**, so image builds are unverified. Railway deploy requires linking the repo to a Railway project (account-side action). |
+| Docker / Railway deployment config | ✅ | **Deployed live on Railway** — see below |
 
 ## Verified runtime checks (2026-10-17)
 - `GET /api/health` → `{"status":"ok","service":"steelbid-api","version":"2.0.0"}`; `/api/health/ready` → DB ok.
@@ -72,8 +72,28 @@ Last updated: 2026-10-17 (final verification pass)
 - `qc.clear()` removed mounted queries so they never refetched after org switch → `switchOrg` now uses `removeQueries` + `invalidateQueries` so identity queries refetch and tenant data reloads.
 - Added `aria-label="User menu"` / `aria-label="Organization switcher"` for stable a11y targeting.
 
+## Railway deployment (LIVE — verified 2026-10-17)
+
+Project: https://railway.com/project/98a7ecaa-a005-4eb9-b798-8acaa062069b (`steelbid-ai`)
+
+| Service | Status | URL / notes |
+|---|---|---|
+| `web` | ● Online | **https://web-production-972cd.up.railway.app** — React UI + nginx `/api/*` proxy |
+| `api` | ● Online | https://api-production-51c1.up.railway.app — `/api/health` ✓ `/api/health/ready` ✓ |
+| `worker` | ● Online | Celery, concurrency=2, connected to `redis.railway.internal` |
+| `Postgres` | ● Online | Postgres 18 + 500MB volume |
+| `Redis` | ● Online | session-free cache + Celery broker |
+
+Verified live:
+- `GET web/api/health` → `{"status":"ok"}` through the nginx proxy
+- `POST web/api/v1/auth/login` → 200 + secure session cookie
+- `GET web/api/v1/dashboard/summary` → live seeded KPIs (Apex Steel Traders org)
+- Migrations ran on api boot; demo seed ran once via `RUN_SEED=true` (guarded by `DEMO_MODE`)
+
+Deploy issues found & fixed: repo-root build contexts (RAILWAY_DOCKERFILE_PATH per service), missing `email-validator` in requirements.txt, nginx Host-header loop to Railway edge, Celery prefork OOM (48 workers → capped at 2).
+
 ## Known limitations (rolling)
 - Redis is not installed on this machine; Celery runs in eager/synchronous fallback locally. Redis is provisioned via docker-compose / Railway for deployment.
-- Docker CLI is not available on this machine; production builds are verified via pip + npm builds, and Dockerfiles are statically reviewed. Railway deploy requires connecting the repo to a Railway project (account-side action).
+- Docker CLI is not available on this machine; local image builds unverified, but the same Dockerfiles built successfully on Railway's builders (deployed live).
 - AI extraction uses the deterministic built-in provider unless an LLM API key is configured via environment variables.
 - Main JS bundle ~1 MB (warning only); route-level code splitting is a follow-up.
