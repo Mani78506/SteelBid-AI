@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+*.log
+pgdata/
+
+# Node / Frontend
+node_modules/
+dist/
+frontend/test-results/
+frontend/playwright-report/
+dbg*.mjs
+
+# Env / secrets
+.env
+*.env.local
+!.env.example
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Runtime artifacts
+backend/app/seed/*.tmp
+uploads/
+.celerybeat/

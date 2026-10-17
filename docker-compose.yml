@@ -1,0 +1,79 @@
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: steelbid
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-steelbid_local_dev}
+      POSTGRES_DB: steelbid
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U steelbid"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6380:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    build: ./backend
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+psycopg://steelbid:${DB_PASSWORD:-steelbid_local_dev}@db:5432/steelbid
+      REDIS_URL: redis://redis:6379/0
+      SECRET_KEY: ${SECRET_KEY:-dev-secret-change-in-production}
+      COOKIE_SECURE: "false"
+      CORS_ORIGINS: http://localhost:5173,http://localhost:8080
+      DEMO_ADMIN_PASSWORD: ${DEMO_ADMIN_PASSWORD:-SteelBid#Demo2026}
+      UPLOAD_DIR: /data/uploads
+      LLM_PROVIDER: ${LLM_PROVIDER:-stub}
+      DEMO_MODE: ${DEMO_MODE:-true}
+    volumes:
+      - uploads:/data/uploads
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request;urllib.request.urlopen('http://localhost:8000/api/health')\""]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+
+  worker:
+    build: ./backend
+    command: celery -A app.worker:celery_app worker --loglevel=info --concurrency=2
+    depends_on:
+      - api
+    environment:
+      DATABASE_URL: postgresql+psycopg://steelbid:${DB_PASSWORD:-steelbid_local_dev}@db:5432/steelbid
+      REDIS_URL: redis://redis:6379/0
+      SECRET_KEY: ${SECRET_KEY:-dev-secret-change-in-production}
+      UPLOAD_DIR: /data/uploads
+      LLM_PROVIDER: ${LLM_PROVIDER:-stub}
+      DEMO_MODE: ${DEMO_MODE:-true}
+    volumes:
+      - uploads:/data/uploads
+
+  web:
+    build: ./frontend
+    depends_on:
+      - api
+    ports:
+      - "8080:80"
+
+volumes:
+  pgdata:
+  uploads:
