@@ -1,5 +1,6 @@
 """Environment-validated settings. All configuration flows through here."""
 from functools import lru_cache
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -35,6 +36,17 @@ class Settings(BaseSettings):
     s3_access_key: str = ""
     s3_secret_key: str = ""
     upload_dir: str = "uploads"  # local object-storage stand-in
+
+    @field_validator("database_url", mode="before")
+    @classmethod
+    def _normalize_database_url(cls, v: str) -> str:
+        # Hosting providers (Railway/Heroku) hand out bare postgres(s):// URLs;
+        # this app ships psycopg 3 only, so pin the driver.
+        if isinstance(v, str):
+            for scheme in ("postgres://", "postgresql://"):
+                if v.startswith(scheme):
+                    return "postgresql+psycopg://" + v[len(scheme):]
+        return v
 
     @property
     def cors_origin_list(self) -> list[str]:

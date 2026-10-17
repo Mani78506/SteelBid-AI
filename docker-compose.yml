@@ -36,7 +36,7 @@ services:
       DATABASE_URL: postgresql+psycopg://steelbid:${DB_PASSWORD:-steelbid_local_dev}@db:5432/steelbid
       REDIS_URL: redis://redis:6379/0
       SECRET_KEY: ${SECRET_KEY:-dev-secret-change-in-production}
-      COOKIE_SECURE: "false"
+      SECURE_COOKIES: "false"
       CORS_ORIGINS: http://localhost:5173,http://localhost:8080
       DEMO_ADMIN_PASSWORD: ${DEMO_ADMIN_PASSWORD:-SteelBid#Demo2026}
       UPLOAD_DIR: /data/uploads
@@ -71,6 +71,8 @@ services:
     build: ./frontend
     depends_on:
       - api
+    environment:
+      API_UPSTREAM: http://api:8000
     ports:
       - "8080:80"
 

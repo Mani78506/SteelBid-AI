@@ -1,13 +1,20 @@
 # Railway deployment — SteelBid AI
-# Services to create in the Railway project:
-#   1. api     → Dockerfile: backend/Dockerfile   (web, runs migrations on boot)
-#   2. worker  → Dockerfile: backend/Dockerfile   (command: celery -A app.worker:celery_app worker -l info)
-#   3. web     → Dockerfile: frontend/Dockerfile  (static + nginx proxy to api)
-#   4. Postgres (Railway plugin)
-#   5. Redis    (Railway plugin)
 #
-# This file pins the api service's build. Create worker/web services from the
-# same repo with their own Dockerfile paths via the Railway dashboard.
+# Create a Railway project with 5 services (see docs/deployment.md for the full
+# step-by-step):
+#
+#   Service   | Source                        | Notes
+#   ----------|-------------------------------|-----------------------------
+#   Postgres  | Railway plugin (PostgreSQL)   | provides DATABASE_URL
+#   Redis     | Railway plugin (Redis)        | provides REDIS_URL
+#   api       | this repo, backend/Dockerfile | web service, runs migrations on boot
+#   worker    | this repo, backend/Dockerfile | command: celery -A app.worker:celery_app worker -l info
+#   web       | this repo, frontend/Dockerfile | env API_UPSTREAM=http://api.railway.internal:8000
+#
+# This file pins the api service build. Worker and web are added as separate
+# services from the same repo with their own Dockerfile paths (Railway
+# dashboard → New Service → GitHub repo → Settings → Build → Dockerfile path),
+# or via `railway add --service`.
 
 [build]
 builder = "DOCKERFILE"
