@@ -222,12 +222,8 @@ export default function AppLayout() {
         </div>
 
         <main className="min-h-0 flex-1 overflow-y-auto p-4 md:p-6">
-          {/* Enter-only fade — no exit animation, so navigation never flashes the page blank */}
-          <motion.div key={location.pathname}
-            initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.18 }}>
-            <Outlet />
-          </motion.div>
+          {/* No page transition — instant render, zero flash on navigation */}
+          <Outlet />
         </main>
       </div>
     </div>

@@ -1,6 +1,5 @@
 import * as React from "react";
 import { useQuery } from "@tanstack/react-query";
-import { motion } from "framer-motion";
 import { Link } from "react-router";
 import {
   Boxes, ShoppingCart, FileText, TrendingUp, AlertTriangle, ClipboardCheck,
@@ -23,14 +22,14 @@ const KPI_DEFS: { key: string; label: string; icon: React.ElementType; kind: "mo
   { key: "pending_approvals", label: "Pending approvals", icon: ClipboardCheck, kind: "count" },
 ];
 
-function KpiCard({ def, raw, index }: { def: (typeof KPI_DEFS)[number]; raw: unknown; index: number }) {
+function KpiCard({ def, raw }: { def: (typeof KPI_DEFS)[number]; raw: unknown }) {
   const v = (raw ?? {}) as Record<string, unknown>;
   const display = def.kind === "money" ? fmtMoney(v.value as string, "₹")
     : def.kind === "pct" ? `${(Number(v.value ?? 0) * 100).toFixed(1)}%`
     : String(v.count ?? v.value ?? "0");
   const sub = def.sub?.(v);
   return (
-    <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: index * 0.04 }}>
+    <div>
       <Card className="hover:shadow-md transition-shadow">
         <CardContent className="flex items-center gap-3 py-3.5">
           <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-primary-50 text-primary-600">
@@ -43,7 +42,7 @@ function KpiCard({ def, raw, index }: { def: (typeof KPI_DEFS)[number]; raw: unk
           </div>
         </CardContent>
       </Card>
-    </motion.div>
+    </div>
   );
 }
 
@@ -81,7 +80,7 @@ export default function CommandCenter() {
         <div className="grid grid-cols-2 gap-3 md:grid-cols-4">{Array.from({ length: 8 }).map((_, i) => <Skeleton key={i} className="h-[82px]" />)}</div>
       ) : (
         <div className="grid grid-cols-2 gap-3 md:grid-cols-4" role="list" aria-label="Key metrics">
-          {KPI_DEFS.map((def, i) => <KpiCard key={def.key} def={def} raw={d?.kpis?.[def.key]} index={i} />)}
+          {KPI_DEFS.map((def) => <KpiCard key={def.key} def={def} raw={d?.kpis?.[def.key]} />)}
         </div>
       )}
 
@@ -180,8 +179,7 @@ export default function CommandCenter() {
                     <div key={w.id} className="flex items-center gap-3 rounded-md bg-muted/40 px-3 py-2 text-sm">
                       <div className="min-w-0 flex-1"><p className="font-medium">{w.number}</p>
                         <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-slate-200">
-                          <motion.div className="h-full rounded-full bg-accent"
-                            initial={{ width: 0 }} animate={{ width: `${pct}%` }} />
+                          <div className="h-full rounded-full bg-accent" style={{ width: `${pct}%` }} />
                         </div>
                       </div>
                       <p className="text-xs text-muted-foreground tabular-nums">{produced}/{planned} MT</p>
