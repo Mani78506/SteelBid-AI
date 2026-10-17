@@ -2,6 +2,7 @@
 @tailwind components;
 @tailwind utilities;
 
+html { scrollbar-gutter: stable; }
 body { @apply bg-background text-foreground antialiased; }
 * { @apply border-border; }
 
