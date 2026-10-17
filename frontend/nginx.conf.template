@@ -1,5 +1,5 @@
 server {
-    listen 80;
+    listen ${PORT};
     server_name _;
     root /usr/share/nginx/html;
     index index.html;
@@ -11,10 +11,15 @@ server {
 
     # Proxy API calls to the backend service.
     # docker-compose: API_UPSTREAM=http://api:8000
-    # Railway private networking: API_UPSTREAM=http://api.railway.internal:8000
+    # Railway: API_UPSTREAM=https://<api-service>.up.railway.app (or
+    #          http://api.railway.internal:8000 if private networking is enabled)
     location /api/ {
+        resolver 1.1.1.1 8.8.8.8 valid=60s;
+        proxy_ssl_server_name on;
         proxy_pass ${API_UPSTREAM};
-        proxy_set_header Host $host;
+        # Railway edge routes by Host — send the upstream's hostname, not ours,
+        # or the request loops back into this nginx.
+        proxy_set_header Host $proxy_host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
