@@ -1,4 +1,5 @@
 import * as React from "react";
+import { useQuery } from "@tanstack/react-query";
 import { NavLink, Outlet, useNavigate, useLocation } from "react-router";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -9,6 +10,7 @@ import {
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/lib/auth";
 import { Input } from "@/components/ui";
+import { get, post } from "@/lib/api";
 
 interface NavItem { to: string; label: string; icon: React.ElementType; profiles?: string[] }
 interface NavGroup { title: string; items: NavItem[] }
@@ -91,11 +93,14 @@ export default function AppLayout() {
   const [orgMenu, setOrgMenu] = React.useState(false);
   const [userMenu, setUserMenu] = React.useState(false);
   const [mobileNav, setMobileNav] = React.useState(false);
+  const [notificationMenu, setNotificationMenu] = React.useState(false);
   const navigate = useNavigate();
   const location = useLocation();
   const [search, setSearch] = React.useState("");
   const profiles = activeOrg?.business_profiles ?? [];
   const crumbs = location.pathname.split("/").filter(Boolean);
+  const notifications = useQuery({ queryKey: ["notifications", activeOrg?.id], enabled: !!activeOrg?.id,
+    queryFn: () => get<{ unread_count:number; items:{id:string;title:string;body?:string;link?:string;is_read:boolean;created_at:string}[] }>("/v1/notifications") });
 
   React.useEffect(() => { setOrgMenu(false); setUserMenu(false); }, [location.pathname]);
 
@@ -158,7 +163,11 @@ export default function AppLayout() {
               <div className="absolute left-0 top-full z-30 mt-1 w-80 rounded-md border border-border bg-card py-1 shadow-lg" role="listbox">
                 {orgs.map((o) => (
                   <button key={o.id} role="option" aria-selected={o.id === activeOrg?.id}
-                    onClick={() => switchOrg(o.id)}
+                    onClick={async () => {
+                      if (o.id === activeOrg?.id) { setOrgMenu(false); return; }
+                      await switchOrg(o.id);
+                      setOrgMenu(false);
+                    }}
                     className={cn("flex w-full items-start gap-2 px-3 py-2 text-left text-sm hover:bg-muted",
                       o.id === activeOrg?.id && "bg-primary-50")}>
                     <Building2 className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
@@ -181,7 +190,7 @@ export default function AppLayout() {
           </div>
 
           <div className="ml-auto flex items-center gap-2">
-            <button className="rounded-md p-2 hover:bg-muted" aria-label="Notifications"><Bell className="h-4 w-4 text-muted-foreground" /></button>
+            <div className="relative"><button onClick={() => { setNotificationMenu(v => !v); setOrgMenu(false); setUserMenu(false); }} className="relative rounded-md p-2 hover:bg-muted" aria-label="Notifications"><Bell className="h-4 w-4 text-muted-foreground" />{(notifications.data?.unread_count ?? 0)>0&&<span className="absolute -right-0.5 -top-0.5 grid h-4 min-w-4 place-items-center rounded-full bg-red-500 px-1 text-[9px] font-bold text-white">{notifications.data!.unread_count}</span>}</button>{notificationMenu&&<div className="absolute right-0 top-full z-30 mt-1 w-96 rounded-md border border-border bg-card p-2 shadow-lg"><div className="mb-1 flex justify-between px-2 text-sm font-semibold"><span>Notifications</span><span className="text-xs font-normal text-muted-foreground">{notifications.data?.unread_count ?? 0} unread</span></div>{notifications.isLoading?<p className="p-3 text-xs text-muted-foreground">Loading notifications…</p>:notifications.data?.items.length?notifications.data.items.map(n=><button key={n.id} onClick={async()=>{if(!n.is_read)await post(`/v1/notifications/${n.id}/read`); await notifications.refetch(); setNotificationMenu(false); if(n.link)navigate(n.link);}} className={`block w-full rounded px-2 py-2 text-left text-xs hover:bg-muted ${n.is_read?"":"bg-blue-50"}`}><b className="block">{n.title}</b><span className="block truncate text-muted-foreground">{n.body}</span><span className="mt-1 block text-[10px] text-muted-foreground">{new Date(n.created_at).toLocaleString()}</span></button>):<p className="p-3 text-xs text-muted-foreground">No notifications.</p>}</div>}</div>
             <div className="relative">
               <button onClick={() => { setUserMenu((v) => !v); setOrgMenu(false); }}
                 className="flex items-center gap-2 rounded-md px-2 py-1.5 hover:bg-muted"

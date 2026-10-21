@@ -17,6 +17,27 @@ celery_app.conf.update(
 )
 
 
+@celery_app.task(name="steelbid.ingest_market_observations", bind=True, autoretry_for=(ConnectionError,),
+                 retry_backoff=True, retry_jitter=True, retry_kwargs={"max_retries": 3})
+def ingest_market_observations_task(self, organization_id: str, source_id: str, provider_key: str,
+                                    idempotency_key: str, observations: list[dict], is_synthetic: bool = False) -> dict:
+    """Safe task entrypoint; schedulers must call this only for an authorized configured provider."""
+    from uuid import UUID
+    from app.database import SessionLocal
+    from app.services.market_ingestion import ingest_observations
+    from app.services.market_providers import ProviderObservation
+    db = SessionLocal()
+    try:
+        rows = [ProviderObservation(**row) for row in observations]
+        run = ingest_observations(db, organization_id=UUID(organization_id), source_id=UUID(source_id),
+                                  provider_key=provider_key, idempotency_key=idempotency_key,
+                                  observations=rows, is_synthetic=is_synthetic)
+        return {"run_id": str(run.id), "status": run.status, "inserted": run.inserted_count,
+                "duplicates": run.duplicate_count, "rejected": run.rejected_count}
+    finally:
+        db.close()
+
+
 @celery_app.task(name="steelbid.extract_tender_document")
 def extract_tender_document_task(tender_id: str, document_id: str) -> dict:
     """Worker entry point: delegates to the same extraction service as the API."""

@@ -13,12 +13,15 @@ from app.core.deps import TenantContext, require
 from app.core.errors import bad_request, conflict, not_found
 from app.core.pagination import Page, PageParams, paginate
 from app.models.materials import OrganizationMaterial
-from app.models.ops import AIJob
-from app.models.projects import (BOQItem, ExtractionEvidence, Project, Tender, TenderDocument)
+from app.models.inventory import StockLot
+from app.models.procurement import Supplier, SupplierQuote
+from app.models.ops import AIJob, CostEstimate
+from app.models.projects import (BOQItem, ExtractionEvidence, Project, Tender, TenderDocument, TenderRequirementSnapshot, TenderSupplierSelection)
 from app.schemas.projects import (BOQItemIn, BOQItemOut, BOQReviewIn, EvidenceOut,
                                   TenderDocumentOut, TenderIn, TenderOut, TenderStatusIn,
-                                  TenderUpdate)
+                                  TenderUpdate, TenderSupplierSelectionIn, TenderSupplierSelectionCancelIn)
 from app.services.audit import record_audit
+from app.services.tender_costing import compatible_offer
 
 router = APIRouter(prefix="/tenders", tags=["tenders"])
 settings = get_settings()
@@ -30,6 +33,115 @@ TENDER_FLOW = {
     "BID_SUBMITTED": {"WON", "LOST"},
     "WON": set(), "LOST": set(), "CANCELLED": set(),
 }
+
+
+@router.post("/{tender_id}/requirement-snapshots", status_code=201)
+def snapshot_confirmed_requirements(tender_id: UUID, ctx: TenantContext = Depends(require("tenders:write"))):
+    """Freeze only confirmed, mapped BOQ lines for commercial costing."""
+    _get_tender(ctx, tender_id)
+    rows = ctx.db.scalars(select(BOQItem).where(BOQItem.tender_id == tender_id,
+        BOQItem.organization_id == ctx.org_id, BOQItem.review_status == "CONFIRMED",
+        BOQItem.material_id.isnot(None), BOQItem.quantity.isnot(None), BOQItem.unit.isnot(None))).all()
+    if not rows:
+        raise bad_request("NO_APPROVED_REQUIREMENTS", "Confirm mapped BOQ requirements before snapshotting")
+    version = (ctx.db.scalar(select(func.max(TenderRequirementSnapshot.version)).where(
+        TenderRequirementSnapshot.tender_id == tender_id)) or 0) + 1
+    now = datetime.now(timezone.utc)
+    for boq in rows:
+        ctx.db.add(TenderRequirementSnapshot(organization_id=ctx.org_id, tender_id=tender_id,
+            source_boq_item_id=boq.id, version=version, material_id=boq.material_id,
+            form=boq.form, grade=boq.grade, specification=boq.specification,
+            quantity=boq.quantity, unit=boq.unit, approved_at=now))
+    ctx.db.flush()
+    record_audit(ctx, "tender.requirements_snapshot", "tender", tender_id,
+                 {"after": {"version": version, "lines": len(rows)}})
+    ctx.db.commit()
+    return {"tender_id": str(tender_id), "version": version, "lines": len(rows), "status": "APPROVED_REQUIREMENTS"}
+
+
+@router.get("/{tender_id}/requirement-snapshots")
+def list_requirement_snapshots(tender_id: UUID, ctx: TenantContext = Depends(require("read"))):
+    _get_tender(ctx, tender_id)
+    rows = ctx.db.scalars(select(TenderRequirementSnapshot).where(
+        TenderRequirementSnapshot.tender_id == tender_id,
+        TenderRequirementSnapshot.organization_id == ctx.org_id).order_by(
+        TenderRequirementSnapshot.version.desc(), TenderRequirementSnapshot.created_at.desc())).all()
+    return [{"id": str(r.id), "version": r.version, "material_id": str(r.material_id),
+             "form": r.form, "grade": r.grade, "specification": r.specification,
+             "quantity": str(r.quantity), "unit": r.unit, "wastage_pct": str(r.wastage_pct),
+             "engineering_status": r.engineering_status, "approved_at": r.approved_at.isoformat()} for r in rows]
+
+
+@router.get("/{tender_id}/requirement-snapshots/{snapshot_id}/supplier-offers")
+def compatible_supplier_offers(tender_id: UUID, snapshot_id: UUID, ctx: TenantContext = Depends(require("read"))):
+    _get_tender(ctx, tender_id)
+    req = ctx.db.scalar(select(TenderRequirementSnapshot).where(TenderRequirementSnapshot.id == snapshot_id, TenderRequirementSnapshot.tender_id == tender_id, TenderRequirementSnapshot.organization_id == ctx.org_id))
+    if req is None: raise not_found("Tender requirement snapshot")
+    eligible = Decimal(str(ctx.db.scalar(select(func.coalesce(func.sum(StockLot.on_hand_qty - StockLot.reserved_qty), 0)).where(StockLot.organization_id == ctx.org_id, StockLot.material_id == req.material_id, StockLot.quality_status == "OK")) or 0))
+    items = []
+    for quote in ctx.db.scalars(select(SupplierQuote).where(SupplierQuote.organization_id == ctx.org_id, SupplierQuote.material_id == req.material_id)).all():
+        result = compatible_offer(req, ctx.db.get(OrganizationMaterial, req.material_id), quote, ctx.db.get(OrganizationMaterial, quote.material_id), eligible)
+        supplier = ctx.db.get(Supplier, quote.supplier_id)
+        item = {"supplier_quote_id": str(quote.id), "supplier_name": supplier.name if supplier else None, "quantity": str(quote.quantity), "unit": quote.unit, "unit_price": str(quote.unit_price), "freight_per_unit": str(quote.freight_per_unit), "tax_recoverable": quote.tax_recoverable, "tax_pct": str(quote.tax_pct), "valid_until": str(quote.valid_until) if quote.valid_until else None, **{k: str(v) if isinstance(v, Decimal) else v for k, v in result.items()}}
+        item["total_landed_cost"] = str(result["landed_cost_per_unit"] * quote.quantity)
+        items.append(item)
+    return {"snapshot_id": str(snapshot_id), "items": items}
+
+
+@router.get("/{tender_id}/supplier-selections")
+def list_supplier_selections(tender_id: UUID, ctx: TenantContext = Depends(require("read"))):
+    _get_tender(ctx, tender_id)
+    rows = ctx.db.scalars(select(TenderSupplierSelection).where(TenderSupplierSelection.tender_id == tender_id, TenderSupplierSelection.organization_id == ctx.org_id).order_by(TenderSupplierSelection.created_at)).all()
+    return [{"id": str(x.id), "snapshot_id": str(x.tender_requirement_snapshot_id), "supplier_quote_id": str(x.supplier_quote_id), "selected_qty": str(x.selected_qty), "unit": x.unit, "landed_cost_per_unit": str(x.landed_cost_per_unit), "total_landed_cost": str(x.selected_qty * x.landed_cost_per_unit), "valid_until": str(x.valid_until) if x.valid_until else None, "delivery_terms": x.delivery_terms, "status": x.status, "created_at": x.created_at.isoformat()} for x in rows]
+
+
+@router.post("/{tender_id}/requirement-snapshots/{snapshot_id}/supplier-selections", status_code=201)
+def create_supplier_selection(tender_id: UUID, snapshot_id: UUID, body: TenderSupplierSelectionIn, ctx: TenantContext = Depends(require("procurement:write"))):
+    _get_tender(ctx, tender_id)
+    req = ctx.db.scalar(select(TenderRequirementSnapshot).where(TenderRequirementSnapshot.id == snapshot_id, TenderRequirementSnapshot.tender_id == tender_id, TenderRequirementSnapshot.organization_id == ctx.org_id).with_for_update())
+    if req is None: raise not_found("Tender requirement snapshot")
+    quote = ctx.db.scalar(select(SupplierQuote).where(SupplierQuote.id == body.supplier_quote_id, SupplierQuote.organization_id == ctx.org_id))
+    if quote is None: raise not_found("Supplier quote")
+    eligible = Decimal(str(ctx.db.scalar(select(func.coalesce(func.sum(StockLot.on_hand_qty - StockLot.reserved_qty), 0)).where(StockLot.organization_id == ctx.org_id, StockLot.material_id == req.material_id, StockLot.quality_status == "OK")) or 0))
+    check = compatible_offer(req, ctx.db.get(OrganizationMaterial, req.material_id), quote, ctx.db.get(OrganizationMaterial, quote.material_id), eligible)
+    if not check["compatible"]: raise bad_request("INCOMPATIBLE_SUPPLIER_OFFER", "; ".join(check["reasons"]))
+    used = Decimal(str(ctx.db.scalar(select(func.coalesce(func.sum(TenderSupplierSelection.selected_qty), 0)).where(TenderSupplierSelection.tender_requirement_snapshot_id == snapshot_id, TenderSupplierSelection.status == "SELECTED")) or 0))
+    if body.selected_qty + used > check["shortage_qty"]: raise bad_request("OVER_ALLOCATION", "Allocation exceeds current procurement shortage")
+    if body.selected_qty > quote.quantity: raise bad_request("QUOTE_QUANTITY_EXCEEDED", "Allocation exceeds supplier offer quantity")
+    exists = ctx.db.scalar(select(TenderSupplierSelection.id).where(TenderSupplierSelection.tender_requirement_snapshot_id == snapshot_id, TenderSupplierSelection.supplier_quote_id == quote.id, TenderSupplierSelection.status == "SELECTED"))
+    if exists: raise conflict("DUPLICATE_ALLOCATION", "Supplier offer already allocated to this requirement")
+    tax = Decimal("0") if quote.tax_recoverable else quote.unit_price * quote.fx_rate_to_org_ccy * quote.tax_pct
+    row = TenderSupplierSelection(organization_id=ctx.org_id, tender_id=tender_id, tender_requirement_snapshot_id=snapshot_id, supplier_quote_id=quote.id, selected_qty=body.selected_qty, unit=req.unit, unit_price=quote.unit_price, freight_per_unit=quote.freight_per_unit, nonrecoverable_tax_per_unit=tax, landed_cost_per_unit=check["landed_cost_per_unit"], valid_until=quote.valid_until, delivery_terms=body.delivery_terms, selected_by=ctx.user_id)
+    ctx.db.add(row); ctx.db.flush(); record_audit(ctx, "tender.supplier_selection.create", "tender_supplier_selection", row.id, {"after": {"tender_id": str(tender_id), "snapshot_id": str(snapshot_id), "quote_id": str(quote.id), "quantity": str(body.selected_qty)}}); ctx.db.commit()
+    return {"id": str(row.id), "selected_qty": str(row.selected_qty), "landed_cost_per_unit": str(row.landed_cost_per_unit)}
+
+
+@router.post("/{tender_id}/supplier-selections/{selection_id}/cancel")
+def cancel_supplier_selection(tender_id: UUID, selection_id: UUID, body: TenderSupplierSelectionCancelIn,
+                              ctx: TenantContext = Depends(require("procurement:write"))):
+    _get_tender(ctx, tender_id)
+    locked = ctx.db.scalar(select(CostEstimate.id).where(CostEstimate.tender_id == tender_id,
+        CostEstimate.organization_id == ctx.org_id, CostEstimate.status == "APPROVED"))
+    if locked: raise conflict("SELECTIONS_LOCKED", "Approved tender costing locks supplier selections")
+    row = ctx.db.scalar(select(TenderSupplierSelection).where(TenderSupplierSelection.id == selection_id,
+        TenderSupplierSelection.tender_id == tender_id, TenderSupplierSelection.organization_id == ctx.org_id).with_for_update())
+    if row is None: raise not_found("Tender supplier selection")
+    if row.status != "SELECTED": raise conflict("SELECTION_NOT_ACTIVE", "Only active selections can be cancelled")
+    row.status = "CANCELLED"; row.cancellation_reason = body.reason
+    record_audit(ctx, "tender.supplier_selection.cancel", "tender_supplier_selection", row.id,
+                 {"before": {"status": "SELECTED"}, "after": {"status": "CANCELLED", "reason": body.reason}})
+    ctx.db.commit()
+    return {"id": str(row.id), "status": row.status, "reason": row.cancellation_reason}
+
+
+@router.get("/{tender_id}/supplier-selections/history")
+def supplier_selection_history(tender_id: UUID, ctx: TenantContext = Depends(require("read"))):
+    _get_tender(ctx, tender_id)
+    rows = ctx.db.scalars(select(TenderSupplierSelection).where(TenderSupplierSelection.tender_id == tender_id,
+        TenderSupplierSelection.organization_id == ctx.org_id).order_by(TenderSupplierSelection.created_at.desc())).all()
+    return [{"id": str(x.id), "snapshot_id": str(x.tender_requirement_snapshot_id), "supplier_quote_id": str(x.supplier_quote_id),
+             "quantity": str(x.selected_qty), "status": x.status, "reason": x.cancellation_reason,
+             "selected_by": str(x.selected_by) if x.selected_by else None, "created_at": x.created_at.isoformat()} for x in rows]
 
 
 def _t_out(ctx: TenantContext, t: Tender) -> TenderOut:

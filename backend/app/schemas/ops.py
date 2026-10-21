@@ -21,6 +21,7 @@ class CostLineIn(BaseModel):
 
 
 class CostEstimateIn(BaseModel):
+    tender_id: UUID | None = None
     context: dict = {}
     overhead_cost: Decimal = Decimal("0")
     contingency_pct: Decimal = Field(default=Decimal("0"), ge=0, lt=1)
@@ -41,6 +42,7 @@ class CostLineOut(OrmModel):
 
 class CostEstimateOut(OrmModel):
     id: UUID
+    tender_id: UUID | None = None
     context: dict
     status: str
     version: int
@@ -140,6 +142,45 @@ class DashboardSummary(BaseModel):
     production_status: list[dict]
     tender_deadlines: list[dict]
     recent_activity: list[dict]
+
+
+class EnhancedDashboardSummary(BaseModel):
+    organization: dict
+    kpis: dict
+    priorities: list[dict]
+    recent_inquiries: list[dict]
+    procurement_shortages: list[dict]
+    price_observations: list[dict]
+    upcoming_dispatches: list[dict]
+    production_status: list[dict]
+    tender_deadlines: list[dict]
+    recent_activity: list[dict]
+    # NEW: Market Intelligence enhancements
+    market_trends: list[dict]  # Comparable latest price series with provenance and freshness
+    market_comparisons: list[dict]  # 30d vs 90d price changes for key products
+    scenario_summary: dict  # Recent scenario results count
+    # NEW: Tender Intelligence enhancements
+    new_tenders: list[dict]  # Top 5 tenders by deadline (within 30 days)
+    tender_pipeline: dict  # Pipeline counts by status
+    tender_amendments: list[dict]  # Recent tender modifications (last 7 days)
+    # NEW: BOQ/BOM Intelligence
+    boq_review_status: dict  # Count of tenders with BOQ pending review
+    bom_readiness: list[dict]  # Material readiness for active work orders
+    tender_shortages: list[dict]  # Material shortages linked to tender BOQs
+    # NEW: Inventory Intelligence (enhanced)
+    inventory_breakdown: dict  # {on_hand, available, reserved, quality_held}
+    atp_by_material: list[dict]  # Available-to-promise for top 5 materials
+    # NEW: Tender Costing Intelligence
+    active_costing_quotes: list[dict]  # Quotations with pending approval (from tenders)
+    margin_exposure: dict  # Sum of margin at risk
+    pricing_scenarios: dict  # Recent scenario count related to tenders
+    # NEW: Procurement Intelligence (enhanced)
+    open_rfqs: dict  # Count of RFQs issued
+    pending_quotes: dict  # Count of supplier quotes awaiting review
+    delivery_risks: list[dict]  # POs with delivery within 3 days vs actual GRN status
+    # NEW: Approvals Queue
+    approval_queue: list[dict]  # Consolidated list of pending approvals
+    price_alerts: dict  # Count of stale price observations (>14 days old)
 
 
 class BriefingOut(BaseModel):

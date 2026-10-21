@@ -59,6 +59,9 @@ class CostEstimate(Base, UUIDPKMixin, TimestampMixin, OrgScopedMixin):
     status: Mapped[str] = mapped_column(String(16), default="DRAFT")  # DRAFT/APPROVED
     version: Mapped[int] = mapped_column(Integer, default=1)
     parent_estimate_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    # Explicit association: legacy estimates remain valid without a tender.
+    tender_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tenders.id", ondelete="SET NULL"), nullable=True, index=True)
     material_cost: Mapped[Decimal] = mapped_column(Numeric(20, 4), default=0)
     fabrication_cost: Mapped[Decimal] = mapped_column(Numeric(20, 4), default=0)
     labour_cost: Mapped[Decimal] = mapped_column(Numeric(20, 4), default=0)

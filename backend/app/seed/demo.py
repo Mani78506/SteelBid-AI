@@ -23,10 +23,10 @@ from app.models.inventory import InventoryMovement, Reservation, StockLot, Wareh
 from app.models.market import PriceObservation, PriceSource
 from app.models.materials import MaterialCatalog, OrganizationMaterial
 from app.models.ops import (Approval, CostEstimate, CostLine, Dispatch, DispatchItem, Invoice,
-                            Payment)
+                            Notification, Payment)
 from app.models.procurement import (PurchaseOrder, PurchaseOrderItem, PurchaseRequest,
                                     PurchaseRequestItem, RFQ, Supplier, SupplierQuote)
-from app.models.projects import BOQItem, Project, Tender
+from app.models.projects import BOQItem, Project, Tender, TenderRequirementSnapshot, TenderSupplierSelection
 from app.models.sales import Quotation, QuotationItem, QuotationVersion, SalesOrder, SalesOrderItem
 
 NS = uuid.UUID("5b1d4a6a-1111-4f4f-8f8f-00000000000a")

@@ -56,6 +56,7 @@ export const get = <T,>(p: string) => api<T>(p);
 export const post = <T,>(p: string, body?: unknown, idem?: string) =>
   api<T>(p, { method: "POST", body, idempotencyKey: idem });
 export const put = <T,>(p: string, body?: unknown) => api<T>(p, { method: "PUT", body });
+export const patch = <T,>(p: string, body?: unknown) => api<T>(p, { method: "PATCH", body });
 export const del = (p: string) => api(p, { method: "DELETE" });
 
 export interface Page<T> {

@@ -173,6 +173,28 @@ export interface DashboardSummary {
   tender_deadlines: { id: string; number: string; title: string; deadline: string; status: string }[];
   recent_activity: { id: string; action: string; entity_type: string; created_at: string; user_id: string | null }[];
 }
+
+/** Server contract for /v1/dashboard/enhanced. Decimal values are strings. */
+export interface EnhancedDashboardSummary extends DashboardSummary {
+  market_trends: { form: string; grade: string | null; region: string; price_basis: string; latest_price: string; currency: string; unit: string; observed_on: string; change_30d_pct: string | null; is_synthetic: boolean; freshness_days: number; source: string }[];
+  market_comparisons: { form: string; grade: string | null; price_30d: string; price_90d: string; change_pct: string }[];
+  scenario_summary: { total_scenarios: number; period_days: number };
+  new_tenders: { id: string; number: string; title: string; deadline: string; days_until: number; status: string }[];
+  tender_pipeline: Record<string, number | string | null>;
+  tender_amendments: { id: string; number: string; title: string; status: string; updated_at: string }[];
+  boq_review_status: { pending_review: number };
+  bom_readiness: { id: string; number: string; status: string; material_readiness: string | null }[];
+  tender_shortages: { tender_id: string; material_id: string | null; required_qty: string | null; available_qty: string; shortage_qty: string }[];
+  inventory_breakdown: { on_hand: string; available: string; reserved: string; quality_held: string; unit: string };
+  atp_by_material: { material_id: string; name: string; available_atp: string }[];
+  active_costing_quotes: { id: string; number: string; customer_id: string | null; total_selling: string | null; estimated_cost: string | null; gross_margin_pct: string | null }[];
+  margin_exposure: { total_pending_value: string; at_risk_margin: string | null };
+  pricing_scenarios: { total_scenarios: number; tender_related: number | null; label?: string };
+  open_rfqs: { count: number }; pending_quotes: { count: number };
+  delivery_risks: { id: string; number: string; expected_delivery: string; days_late: number; supplier_id: string }[];
+  approval_queue: { type: string; id: string; number: string; value: string | null; created_at: string }[];
+  price_alerts: { stale_observations: number; stale_threshold_days: number };
+}
 export interface Briefing {
   generated_at: string;
   summary: string;

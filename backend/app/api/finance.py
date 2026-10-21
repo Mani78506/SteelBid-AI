@@ -12,6 +12,7 @@ from app.core.pagination import Page, PageParams, paginate
 from app.models.ops import Approval, CostEstimate, CostLine, Invoice, Payment
 from app.models.sales import SalesOrder
 from app.models.inventory import StockLot
+from app.models.projects import Tender
 from app.calc.finance import inventory_valuation
 from app.schemas.ops import (CostEstimateIn, CostEstimateOut, CostLineOut, InvoiceIn,
                              InvoiceOut, PaymentIn)
@@ -45,7 +46,10 @@ def list_estimates(ctx: TenantContext = Depends(require("read")),
 def create_estimate(body: CostEstimateIn, ctx: TenantContext = Depends(require("quotations:write"))):
     buckets = {"MATERIAL": ZERO, "FABRICATION": ZERO, "LABOUR": ZERO, "FREIGHT": ZERO,
                "INSTALLATION": ZERO, "SUBCONTRACTING": ZERO}
-    ce = CostEstimate(organization_id=ctx.org_id, context=body.context,
+    if body.tender_id and not ctx.db.scalar(select(Tender.id).where(
+        Tender.id == body.tender_id, Tender.organization_id == ctx.org_id)):
+        raise not_found("Tender")
+    ce = CostEstimate(organization_id=ctx.org_id, tender_id=body.tender_id, context=body.context,
                       overhead_cost=body.overhead_cost, contingency_pct=body.contingency_pct,
                       currency=ctx.organization.currency_code, created_by=ctx.user_id)
     ctx.db.add(ce)

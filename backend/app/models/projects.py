@@ -101,3 +101,40 @@ class ExtractionEvidence(Base, UUIDPKMixin, TimestampMixin, OrgScopedMixin):
     reviewer_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
     reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     warnings: Mapped[dict] = mapped_column(JSONB, default=dict)
+
+
+class TenderRequirementSnapshot(Base, UUIDPKMixin, TimestampMixin, OrgScopedMixin):
+    """Immutable commercial input copied only from confirmed BOQ lines."""
+    __tablename__ = "tender_requirement_snapshots"
+    __table_args__ = (UniqueConstraint("tender_id", "version", "source_boq_item_id", name="uq_tender_req_snapshot"),)
+    tender_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("tenders.id", ondelete="RESTRICT"), nullable=False, index=True)
+    source_boq_item_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("boq_items.id", ondelete="RESTRICT"), nullable=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    material_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("organization_materials.id", ondelete="RESTRICT"), nullable=False)
+    form: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    grade: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    specification: Mapped[dict] = mapped_column(JSONB, default=dict)
+    quantity: Mapped[Decimal] = mapped_column(Numeric(20, 6), nullable=False)
+    unit: Mapped[str] = mapped_column(String(16), nullable=False)
+    wastage_pct: Mapped[Decimal] = mapped_column(Numeric(8, 6), default=0)
+    engineering_status: Mapped[str] = mapped_column(String(16), default="APPROVED")
+    approved_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class TenderSupplierSelection(Base, UUIDPKMixin, TimestampMixin, OrgScopedMixin):
+    __tablename__ = "tender_supplier_selections"
+    __table_args__ = (UniqueConstraint("tender_requirement_snapshot_id", "supplier_quote_id", name="uq_tender_supplier_selection"),)
+    tender_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("tenders.id", ondelete="RESTRICT"), nullable=False, index=True)
+    tender_requirement_snapshot_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("tender_requirement_snapshots.id", ondelete="RESTRICT"), nullable=False, index=True)
+    supplier_quote_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("supplier_quotes.id", ondelete="RESTRICT"), nullable=False)
+    selected_qty: Mapped[Decimal] = mapped_column(Numeric(20, 6), nullable=False)
+    unit: Mapped[str] = mapped_column(String(16), nullable=False)
+    unit_price: Mapped[Decimal] = mapped_column(Numeric(20, 4), nullable=False)
+    freight_per_unit: Mapped[Decimal] = mapped_column(Numeric(20, 4), default=0)
+    nonrecoverable_tax_per_unit: Mapped[Decimal] = mapped_column(Numeric(20, 4), default=0)
+    landed_cost_per_unit: Mapped[Decimal] = mapped_column(Numeric(20, 4), nullable=False)
+    valid_until: Mapped[date | None] = mapped_column(Date, nullable=True)
+    delivery_terms: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    status: Mapped[str] = mapped_column(String(16), default="SELECTED", index=True)
+    selected_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    cancellation_reason: Mapped[str | None] = mapped_column(String(500), nullable=True)

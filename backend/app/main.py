@@ -25,12 +25,12 @@ def create_app() -> FastAPI:
     )
     register_error_handlers(app)
 
-    from app.api import (ai, audit, auth, customers, dashboard, fabrication, finance,
+    from app.api import (ai, audit, auth, customers, dashboard, fabrication, finance, notifications,
                          inventory, logistics, market, materials, procurement, projects,
                          quotations, sales_orders, tenders)
     for module in (auth, dashboard, customers, quotations, sales_orders, materials, market,
                    procurement, inventory, fabrication, projects, tenders, logistics,
-                   finance, ai, audit):
+                   finance, ai, audit, notifications):
         app.include_router(module.router, prefix="/api/v1")
 
     @app.get("/api/health", tags=["system"])

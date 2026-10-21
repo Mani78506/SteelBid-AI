@@ -30,9 +30,10 @@ export const useAuth = () => React.useContext(AuthCtx);
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const qc = useQueryClient();
+  const fetchMe = React.useCallback(() => get<Me>("/v1/auth/me"), []);
   const meQ = useQuery({
     queryKey: ["me"],
-    queryFn: () => get<Me>("/v1/auth/me"),
+    queryFn: fetchMe,
     retry: false,
     staleTime: 60_000,
   });
@@ -59,9 +60,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
   const switchOrg = async (orgId: string) => {
     await post("/v1/auth/switch-organization", { organization_id: orgId });
-    // Drop every tenant-scoped query; keep + refetch identity so the active org propagates.
+    // The organization is held in the session.  Clear every response that may
+    // belong to the previous tenant, then fetch the new session identity before
+    // the dashboard is allowed to render again.
+    // Keep the observed identity query mounted. Removing it creates a new cache
+    // entry without notifying the existing useQuery observer in some React Query
+    // render timings, which left the org picker showing the old tenant.
     qc.removeQueries({ predicate: (q) => q.queryKey[0] !== "me" && q.queryKey[0] !== "orgs" });
-    await qc.invalidateQueries();
+    await qc.invalidateQueries({ queryKey: ["me"] });
+    await qc.refetchQueries({ queryKey: ["me"], type: "active" });
+    await qc.invalidateQueries({ queryKey: ["orgs"] });
   };
   const can = (perm: string) => {
     if (!role) return false;

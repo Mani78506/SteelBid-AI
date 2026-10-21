@@ -6,6 +6,59 @@ html { scrollbar-gutter: stable; }
 body { @apply bg-background text-foreground antialiased; }
 * { @apply border-border; }
 
+/* Grid children may contain charts and long live alert text.  Permit them to
+   shrink inside the app shell instead of creating a horizontal dashboard scroll. */
+main > * { min-width: 0; }
+
+/* Recharts' default tooltip is intentionally generic and oversized. Keep
+   visualisations compact and consistent with the dashboard card language. */
+.recharts-default-tooltip {
+  min-width: 0 !important;
+  border: 1px solid #d9e3f0 !important;
+  border-radius: 8px !important;
+  padding: 7px 9px !important;
+  background: rgba(255, 255, 255, .98) !important;
+  box-shadow: 0 8px 20px rgba(30, 64, 110, .13) !important;
+}
+.recharts-default-tooltip .recharts-tooltip-label {
+  margin: 0 0 2px !important;
+  color: #0f2747 !important;
+  font-size: 11px !important;
+  font-weight: 700 !important;
+}
+.recharts-default-tooltip .recharts-tooltip-item {
+  padding: 0 !important;
+  color: #246bc2 !important;
+  font-size: 11px !important;
+  font-weight: 600 !important;
+}
+
+/* One verified observation is still useful: render it as a timeline event,
+   not as an empty textual panel. */
+.market-observation-rail {
+  position: relative;
+  height: 120px;
+  border-radius: 12px;
+  overflow: hidden;
+  background: linear-gradient(180deg, #f7fbff 0%, #eef6ff 100%);
+}
+.market-observation-rail::before {
+  content: "";
+  position: absolute;
+  left: 8%; right: 8%; top: 60px;
+  border-top: 2px dashed #b8cae2;
+}
+.market-observation-rail::after {
+  content: "";
+  position: absolute;
+  right: 12%; top: 51px;
+  width: 18px; height: 18px;
+  border: 4px solid #fff;
+  border-radius: 999px;
+  background: #1769aa;
+  box-shadow: 0 0 0 3px #9dcbf6;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
 }

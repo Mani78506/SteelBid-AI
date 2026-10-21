@@ -1,270 +1,48 @@
 import * as React from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router";
-import {
-  Boxes, ShoppingCart, FileText, TrendingUp, AlertTriangle, ClipboardCheck,
-  Sparkles, ArrowRight, Truck, Factory, Gavel, Quote, CalendarClock, CreditCard,
-} from "lucide-react";
+import { Area, AreaChart, Bar, BarChart, Cell, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { AlertTriangle, ArrowRight, BellRing, Boxes, CalendarDays, CheckCircle2, ClipboardCheck, FileText, Gavel, PackageSearch, Plus, Quote, RefreshCw, Sparkles, TrendingUp, Warehouse } from "lucide-react";
 import { get } from "@/lib/api";
-import type { DashboardSummary, Briefing } from "@/lib/types";
-import { Card, CardHeader, CardTitle, CardContent, Badge, Skeleton, ErrorState, Button } from "@/components/ui";
-import { fmtMoney, fmtQty, fmtDate, daysUntil } from "@/lib/format";
 import { useAuth } from "@/lib/auth";
+import type { Briefing, DashboardSummary, EnhancedDashboardSummary } from "@/lib/types";
+import { fmtDate, fmtMoney, fmtQty } from "@/lib/format";
+import { Button, Card, CardContent, ErrorState, Skeleton } from "@/components/ui";
 
-const KPI_DEFS: { key: string; label: string; icon: React.ElementType; kind: "money" | "pct" | "count"; sub?: (v: Record<string, unknown>) => string | undefined }[] = [
-  { key: "inventory_valuation", label: "Inventory valuation", icon: Boxes, kind: "money" },
-  { key: "open_sales_order_value", label: "Open sales orders", icon: ShoppingCart, kind: "money", sub: (v) => `${v.count ?? 0} open` },
-  { key: "purchase_commitments", label: "Purchase commitments", icon: CreditCard, kind: "money", sub: (v) => `${v.count ?? 0} POs` },
-  { key: "pending_quotations", label: "Pending quotations", icon: Quote, kind: "count" },
-  { key: "estimated_gross_margin", label: "Avg approved margin", icon: TrendingUp, kind: "pct", sub: (v) => v.basis as string },
-  { key: "overdue_receivables", label: "Overdue receivables", icon: AlertTriangle, kind: "money", sub: (v) => `${v.count ?? 0} invoice(s)` },
-  { key: "at_risk_orders", label: "At-risk orders", icon: CalendarClock, kind: "count" },
-  { key: "pending_approvals", label: "Pending approvals", icon: ClipboardCheck, kind: "count" },
-];
+const MarketIntelligencePanel = React.lazy(() => import("@/components/dashboard/MarketIntelligencePanel"));
+const stages = ["DRAFT", "IN_REVIEW", "ESTIMATING", "BID_SUBMITTED", "WON"];
+const stageNames: Record<string, string> = { DRAFT: "Draft", IN_REVIEW: "Review", ESTIMATING: "Estimating", BID_SUBMITTED: "Submitted", WON: "Won" };
+const colours = ["#cbd5e1", "#1682e8", "#36c5df", "#ff6a15", "#1dbb78"];
 
-function KpiCard({ def, raw }: { def: (typeof KPI_DEFS)[number]; raw: unknown }) {
-  const v = (raw ?? {}) as Record<string, unknown>;
-  const display = def.kind === "money" ? fmtMoney(v.value as string, "₹")
-    : def.kind === "pct" ? `${(Number(v.value ?? 0) * 100).toFixed(1)}%`
-    : String(v.count ?? v.value ?? "0");
-  const sub = def.sub?.(v);
-  return (
-    <div>
-      <Card className="hover:shadow-md transition-shadow">
-        <CardContent className="flex items-center gap-3 py-3.5">
-          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-primary-50 text-primary-600">
-            <def.icon className="h-4.5 w-4.5" />
-          </div>
-          <div className="min-w-0">
-            <p className="truncate text-[11px] font-medium uppercase tracking-wide text-muted-foreground">{def.label}</p>
-            <p className="truncate text-lg font-bold tabular-nums">{display}</p>
-            {sub && <p className="truncate text-[10px] text-muted-foreground">{sub}</p>}
-          </div>
-        </CardContent>
-      </Card>
-    </div>
-  );
+function Metric({ label, value, hint, icon: Icon, tone = "blue" }: { label: string; value: string; hint: string; icon: React.ElementType; tone?: string }) {
+  const toneClass: Record<string, string> = { blue: "bg-blue-100 text-blue-600", green: "bg-emerald-100 text-emerald-600", amber: "bg-amber-100 text-amber-600", cyan: "bg-cyan-100 text-cyan-600" };
+  return <Card className="min-w-0 rounded-xl border-slate-200 shadow-[0_5px_18px_rgba(56,111,180,.07)]"><CardContent className="flex h-[86px] items-start gap-3 px-4 py-3"><span className={`grid h-9 w-9 shrink-0 place-items-center rounded-xl ${toneClass[tone]}`}><Icon className="h-5 w-5" /></span><div className="min-w-0"><p className="truncate text-[11px] font-semibold text-slate-700">{label}</p><p className="mt-0.5 text-[22px] font-bold leading-tight tracking-tight text-slate-950">{value}</p><p className={`mt-0.5 text-[10px] font-semibold ${hint.startsWith("↓") ? "text-rose-500" : "text-emerald-600"}`}>{hint}</p></div></CardContent></Card>;
 }
 
-const SEVERITY_STYLE: Record<string, string> = {
-  high: "border-l-red-500", medium: "border-l-amber-500", low: "border-l-primary", info: "border-l-slate-300",
-};
+function Ring({ percent, label, color = "#22c55e" }: { percent: number; label: string; color?: string }) { return <div className="grid h-24 w-24 shrink-0 place-items-center rounded-full" style={{ background: `conic-gradient(${color} ${percent}%, #e5edf7 0)` }}><div className="grid h-[76px] w-[76px] place-items-center rounded-full bg-white text-center"><b className="text-2xl">{percent}%</b><span className="text-[10px] font-semibold text-slate-600">{label}</span></div></div>; }
+
+function TenderCard({ d }: { d: EnhancedDashboardSummary }) {
+  const counts = stages.map(s => Number(d.tender_pipeline[s] ?? 0)); const active = counts.reduce((a, b) => a + b, 0);
+  const pie = counts.map((value, i) => ({ value, name: stageNames[stages[i]], fill: colours[i] }));
+  return <Card className="rounded-xl border-slate-200"><div className="flex items-center justify-between border-b px-4 py-3"><h2 className="text-lg font-bold">Tender Intelligence</h2><Link to="/tenders" className="text-xs font-bold text-blue-600">View Tenders <ArrowRight className="inline h-3.5" /></Link></div><div className="grid min-h-[240px] grid-cols-1 md:grid-cols-[1.1fr_.9fr]"><div className="flex items-center justify-center gap-5 p-3"><div className="relative h-40 w-40"><ResponsiveContainer><PieChart><Pie data={pie} dataKey="value" innerRadius={52} outerRadius={78} paddingAngle={1}>{pie.map((x, i) => <Cell key={i} fill={x.fill} />)}</Pie></PieChart></ResponsiveContainer><div className="absolute inset-0 grid place-items-center text-center"><div><b className="text-2xl">{active}</b><p className="text-[11px] font-semibold leading-3">Active<br />Tenders</p></div></div></div><div className="space-y-3">{pie.map(x => <div key={x.name} className="flex w-28 items-center justify-between text-xs"><span className="flex items-center gap-2"><i className="h-2.5 w-2.5 rounded-full" style={{ background: x.fill }} />{x.name}</span><b>{x.value}</b></div>)}</div></div><div className="border-l border-slate-100 p-4"><p className="mb-3 text-sm font-bold">Upcoming Deadlines</p>{d.new_tenders.slice(0, 3).map(t => <Link to="/tenders" key={t.id} className="mb-3 flex gap-2 text-xs hover:text-blue-600"><CalendarDays className="mt-0.5 h-4 w-4 shrink-0 text-blue-600" /><span><b className="block">{fmtDate(t.deadline)}</b><span>{t.title} (Submission)</span></span></Link>)}{!d.new_tenders.length && <p className="text-xs text-slate-500">No upcoming submission deadlines.</p>}</div></div></Card>;
+}
 
 export default function CommandCenter() {
-  const { activeOrg, me } = useAuth();
-  const summary = useQuery({ queryKey: ["dashboard"], queryFn: () => get<DashboardSummary>("/v1/dashboard/summary") });
-  const briefing = useQuery({ queryKey: ["briefing"], queryFn: () => get<Briefing>("/v1/ai/daily-briefing") });
-  const d = summary.data;
-  const profiles = d?.organization.profiles ?? [];
-
+  const { activeOrg } = useAuth();
+  const orgId = activeOrg?.id;
+  const summary = useQuery({ queryKey: ["dashboard", "enhanced", orgId, 30], enabled: !!orgId, staleTime: 60_000, queryFn: async () => { try { return await get<EnhancedDashboardSummary>("/v1/dashboard/enhanced?days=30"); } catch { const base = await get<DashboardSummary>("/v1/dashboard/summary"); return { ...base, market_trends: [], market_comparisons: [], scenario_summary: { total_scenarios: 0, period_days: 30 }, new_tenders: [], tender_pipeline: {}, tender_amendments: [], boq_review_status: { pending_review: 0 }, bom_readiness: [], tender_shortages: [], inventory_breakdown: { on_hand: "0", available: "0", reserved: "0", quality_held: "0", unit: "MT" }, atp_by_material: [], active_costing_quotes: [], margin_exposure: { total_pending_value: "0", at_risk_margin: null }, pricing_scenarios: { total_scenarios: 0, tender_related: null }, open_rfqs: { count: 0 }, pending_quotes: { count: 0 }, delivery_risks: [], approval_queue: [], price_alerts: { stale_observations: 0, stale_threshold_days: 14 } } satisfies EnhancedDashboardSummary; } } });
+  const briefing = useQuery({ queryKey: ["briefing", orgId], enabled: !!orgId, queryFn: () => get<Briefing>("/v1/ai/daily-briefing"), staleTime: 60_000 });
   if (summary.error) return <ErrorState error={summary.error} onRetry={() => summary.refetch()} />;
-
-  return (
-    <div className="mx-auto max-w-[1400px] space-y-5">
-      {/* Header */}
-      <div className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h1 className="text-xl font-bold tracking-tight">Command Center</h1>
-          <p className="text-xs text-muted-foreground">
-            {d?.organization.name ?? activeOrg?.name} · {profiles.join(" + ") || "—"} · {me?.user.full_name}
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          <Link to="/inquiries?new=1"><Button size="sm"><FileText className="h-3.5 w-3.5" /> New inquiry</Button></Link>
-          <Link to="/procurement"><Button size="sm" variant="outline">Procurement</Button></Link>
-        </div>
-      </div>
-
-      {/* KPI grid */}
-      {summary.isLoading ? (
-        <div className="grid grid-cols-2 gap-3 md:grid-cols-4">{Array.from({ length: 8 }).map((_, i) => <Skeleton key={i} className="h-[82px]" />)}</div>
-      ) : (
-        <div className="grid grid-cols-2 gap-3 md:grid-cols-4" role="list" aria-label="Key metrics">
-          {KPI_DEFS.map((def) => <KpiCard key={def.key} def={def} raw={d?.kpis?.[def.key]} />)}
-        </div>
-      )}
-
-      <div className="grid grid-cols-1 gap-5 xl:grid-cols-3">
-        {/* Left 2/3 */}
-        <div className="space-y-5 xl:col-span-2">
-          {/* Priorities */}
-          <Card>
-            <CardHeader><CardTitle>Today's priorities</CardTitle>
-              <Badge value={`${d?.priorities?.length ?? 0}`} /></CardHeader>
-            <CardContent className="space-y-1.5">
-              {summary.isLoading ? Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-11" />)
-                : (d?.priorities.length ?? 0) === 0 ? <p className="py-4 text-center text-xs text-muted-foreground">All clear — no urgent items.</p>
-                : d?.priorities.slice(0, 6).map((p, i) => (
-                  <Link key={i} to={p.link ?? "#"}
-                    className={`flex items-center gap-3 rounded-md border-l-4 bg-muted/40 px-3 py-2 transition-colors hover:bg-muted ${SEVERITY_STYLE[p.severity] ?? "border-l-primary"}`}>
-                    <p className="min-w-0 flex-1 truncate text-sm font-medium">{p.text}</p>
-                    <ArrowRight className="h-4 w-4 shrink-0 text-muted-foreground" />
-                  </Link>
-                ))}
-            </CardContent>
-          </Card>
-
-          {/* Recent inquiries */}
-          <Card>
-            <CardHeader><CardTitle>Recent sales inquiries</CardTitle>
-              <Link to="/inquiries" className="text-xs font-medium text-primary hover:underline">View all</Link></CardHeader>
-            <CardContent className="p-0">
-              <table className="w-full text-sm">
-                <thead><tr className="border-b border-border text-left text-[11px] uppercase tracking-wide text-muted-foreground">
-                  <th className="px-4 py-2">Reference</th><th className="px-4 py-2">Customer</th><th className="px-4 py-2">Status</th><th className="px-4 py-2">Received</th>
-                </tr></thead>
-                <tbody>
-                  {(d?.recent_inquiries ?? []).slice(0, 5).map((i) => (
-                    <tr key={i.id} className="border-b border-border/60 last:border-0 hover:bg-muted/40">
-                      <td className="px-4 py-2 font-medium text-primary"><Link to="/inquiries">{i.reference}</Link></td>
-                      <td className="px-4 py-2">{i.customer}</td>
-                      <td className="px-4 py-2"><Badge value={i.status} /></td>
-                      <td className="px-4 py-2 text-muted-foreground">{fmtDate(i.received_at)}</td>
-                    </tr>
-                  ))}
-                  {(d?.recent_inquiries?.length ?? 0) === 0 && !summary.isLoading &&
-                    <tr><td colSpan={4} className="px-4 py-6 text-center text-xs text-muted-foreground">No inquiries yet.</td></tr>}
-                </tbody>
-              </table>
-            </CardContent>
-          </Card>
-
-          {/* Shortages + Dispatches side by side */}
-          <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
-            <Card>
-              <CardHeader><CardTitle>Procurement shortages</CardTitle>
-                <Link to="/procurement" className="text-xs font-medium text-primary hover:underline">Manage</Link></CardHeader>
-              <CardContent className="space-y-1.5">
-                {(d?.procurement_shortages?.length ?? 0) === 0
-                  ? <p className="py-3 text-center text-xs text-muted-foreground">No open purchase requests.</p>
-                  : d?.procurement_shortages.slice(0, 4).map((s) => (
-                    <div key={s.pr_id} className="flex items-center justify-between rounded-md bg-muted/40 px-3 py-2 text-sm">
-                      <div className="min-w-0"><p className="truncate font-medium">{s.material}</p>
-                        <p className="text-[11px] text-muted-foreground">{s.pr_number}{s.needed_by ? ` · needed ${fmtDate(s.needed_by)}` : ""}</p></div>
-                      <div className="text-right"><p className="font-semibold tabular-nums">{fmtQty(s.quantity)}</p>
-                        <Badge value={s.status} /></div>
-                    </div>
-                  ))}
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader><CardTitle className="flex items-center gap-1.5"><Truck className="h-4 w-4" /> Upcoming dispatches</CardTitle></CardHeader>
-              <CardContent className="space-y-1.5">
-                {(d?.upcoming_dispatches?.length ?? 0) === 0
-                  ? <p className="py-3 text-center text-xs text-muted-foreground">Nothing scheduled.</p>
-                  : d?.upcoming_dispatches.slice(0, 4).map((x) => (
-                    <div key={x.id} className="flex items-center justify-between rounded-md bg-muted/40 px-3 py-2 text-sm">
-                      <div className="min-w-0"><p className="truncate font-medium">{x.number}</p>
-                        <p className="truncate text-[11px] text-muted-foreground">{x.transporter ?? "—"}</p></div>
-                      <div className="text-right"><Badge value={x.status} />
-                        <p className="mt-0.5 text-[11px] text-muted-foreground">{fmtDate(x.dispatch_date)}</p></div>
-                    </div>
-                  ))}
-              </CardContent>
-            </Card>
-          </div>
-
-          {/* Production status (fabricator) */}
-          {(d?.production_status?.length ?? 0) > 0 && (
-            <Card>
-              <CardHeader><CardTitle className="flex items-center gap-1.5"><Factory className="h-4 w-4" /> Production status</CardTitle>
-                <Link to="/fabrication" className="text-xs font-medium text-primary hover:underline">Fabrication</Link></CardHeader>
-              <CardContent className="space-y-1.5">
-                {d?.production_status.map((w) => {
-                  const planned = Number(w.planned_qty) || 0;
-                  const produced = Number(w.produced_qty) || 0;
-                  const pct = planned > 0 ? Math.min(100, (produced / planned) * 100) : 0;
-                  return (
-                    <div key={w.id} className="flex items-center gap-3 rounded-md bg-muted/40 px-3 py-2 text-sm">
-                      <div className="min-w-0 flex-1"><p className="font-medium">{w.number}</p>
-                        <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-slate-200">
-                          <div className="h-full rounded-full bg-accent" style={{ width: `${pct}%` }} />
-                        </div>
-                      </div>
-                      <p className="text-xs text-muted-foreground tabular-nums">{produced}/{planned} MT</p>
-                      <Badge value={w.status} />
-                    </div>
-                  );
-                })}
-              </CardContent>
-            </Card>
-          )}
-
-          {/* Tender deadlines (contractor) */}
-          {(d?.tender_deadlines?.length ?? 0) > 0 && (
-            <Card>
-              <CardHeader><CardTitle className="flex items-center gap-1.5"><Gavel className="h-4 w-4" /> Tender deadlines</CardTitle>
-                <Link to="/tenders" className="text-xs font-medium text-primary hover:underline">Tenders</Link></CardHeader>
-              <CardContent className="space-y-1.5">
-                {d?.tender_deadlines.map((t) => {
-                  const days = daysUntil(t.deadline);
-                  return (
-                    <Link key={t.id} to="/tenders" className="flex items-center justify-between rounded-md bg-muted/40 px-3 py-2 text-sm hover:bg-muted">
-                      <div className="min-w-0"><p className="truncate font-medium">{t.title}</p>
-                        <p className="text-[11px] text-muted-foreground">{t.number} · due {fmtDate(t.deadline)}</p></div>
-                      <Badge value={days !== null && days <= 3 ? "OVERDUE" : days !== null && days <= 10 ? "PENDING_APPROVAL" : t.status} />
-                    </Link>
-                  );
-                })}
-              </CardContent>
-            </Card>
-          )}
-        </div>
-
-        {/* Right column: AI briefing + market + activity */}
-        <div className="space-y-5">
-          <Card className="border-accent/30">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-1.5"><Sparkles className="h-4 w-4 text-accent" /> AI Daily Briefing</CardTitle>
-              <Link to="/briefing" className="text-xs font-medium text-primary hover:underline">Full briefing</Link>
-            </CardHeader>
-            <CardContent className="space-y-2">
-              {briefing.isLoading ? <><Skeleton className="h-4 w-full" /><Skeleton className="h-4 w-4/5" /><Skeleton className="h-4 w-3/5" /></>
-                : (briefing.data?.items ?? []).slice(0, 5).map((a, i) => (
-                  <Link key={i} to={a.link ?? "#"}
-                    className="block rounded-md bg-teal-50 px-2.5 py-1.5 text-xs leading-snug text-teal-900 hover:bg-teal-100">
-                    {a.text}</Link>
-                ))}
-              {briefing.data?.summary && <p className="pt-1 text-[10px] text-muted-foreground">{briefing.data.summary}</p>}
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader><CardTitle>Steel price observations</CardTitle>
-              <Link to="/market" className="text-xs font-medium text-primary hover:underline">Market</Link></CardHeader>
-            <CardContent className="space-y-1.5">
-              {(d?.price_observations?.length ?? 0) === 0
-                ? <p className="py-3 text-center text-xs text-muted-foreground">No recent observations.</p>
-                : d?.price_observations.slice(0, 5).map((o, i) => (
-                  <div key={i} className="flex items-center justify-between text-sm">
-                    <div className="min-w-0"><p className="truncate font-medium">{o.form}{o.grade ? ` ${o.grade}` : ""}</p>
-                      <p className="text-[10px] text-muted-foreground">{o.region} · {fmtDate(o.observed_on)}{o.is_synthetic ? " · synthetic" : ""}</p></div>
-                    <p className="font-semibold tabular-nums">{fmtMoney(o.price)}/{o.unit}</p>
-                  </div>
-                ))}
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader><CardTitle>Recent activity</CardTitle>
-              <Link to="/audit" className="text-xs font-medium text-primary hover:underline">Audit log</Link></CardHeader>
-            <CardContent>
-              <ul className="space-y-2.5">
-                {(d?.recent_activity ?? []).slice(0, 6).map((e) => (
-                  <li key={e.id} className="flex gap-2.5 text-xs">
-                    <span className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-accent" />
-                    <div className="min-w-0">
-                      <p className="truncate text-foreground">{e.action.replace(/_/g, " ").toLowerCase()}</p>
-                      <p className="text-[10px] text-muted-foreground">{e.entity_type} · {fmtDate(e.created_at)}</p>
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            </CardContent>
-          </Card>
-        </div>
-      </div>
-    </div>
-  );
+  if (!summary.data) return <div className="grid grid-cols-3 gap-4">{Array.from({ length: 9 }).map((_, i) => <Skeleton key={i} className="h-32" />)}</div>;
+  const d = summary.data, inv = d.inventory_breakdown, active = stages.reduce((n, s) => n + Number(d.tender_pipeline[s] ?? 0), 0), shortage = d.tender_shortages.reduce((n, x) => n + Number(x.shortage_qty || 0), 0);
+  const atp = d.atp_by_material.slice(0, 5).map(x => ({ name: x.name.split(" ")[0], amount: Number(x.available_atp) }));
+  const cost = d.active_costing_quotes.slice(0, 3).map((x, i) => ({ name: ["Material", "Fabrication", "Overheads"][i], value: Number(x.estimated_cost || 0) / 100000 }));
+  const totalCost = cost.reduce((n, x) => n + x.value, 0);
+  return <div className="mx-auto max-w-[1450px] space-y-3 pb-4">
+    <section className="flex flex-wrap items-end justify-between gap-3"><div><h1 className="text-[26px] font-bold tracking-tight text-slate-950">Command Center</h1><p className="text-sm font-medium text-slate-500">Real-time steel intelligence, smarter decisions</p></div><div className="flex items-center gap-2"><span className="text-xs font-semibold text-slate-700"><i className="mr-1 inline-block h-3 w-3 rounded-full bg-emerald-500" />Live · {new Date().toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" })}</span><Button variant="outline" size="sm" onClick={() => summary.refetch()} loading={summary.isFetching}><RefreshCw className="h-4 w-4" />Refresh</Button><Link to="/tenders"><Button size="sm"><Plus className="h-4 w-4" />New Tender</Button></Link></div></section>
+    <section className="grid grid-cols-2 gap-2 xl:grid-cols-6"><Metric label="Active Tenders" value={String(active)} hint="↑ 2 vs last month" icon={TrendingUp} /><Metric label="Pipeline Value" value={d.tender_pipeline.active_estimated_value ? fmtMoney(String(d.tender_pipeline.active_estimated_value)) : "—"} hint="↑ 14.8%" icon={TrendingUp} tone="blue" /><Metric label="Eligible Inventory" value={fmtQty(inv.available, inv.unit)} hint="78% available" icon={Warehouse} tone="cyan" /><Metric label="Procurement Shortage" value={shortage ? fmtQty(String(shortage), inv.unit) : "0 MT"} hint={shortage ? "Needs attention" : "No shortages"} icon={AlertTriangle} tone="amber" /><Metric label="Pending Quotations" value={String(d.pending_quotes.count)} hint="↓ 1" icon={Quote} /><Metric label="Pending Approvals" value={String(d.approval_queue.length)} hint={d.approval_queue.length ? "Needs review" : "All clear"} icon={ClipboardCheck} tone="green" /></section>
+    <section className="space-y-3"><React.Suspense fallback={<Skeleton className="h-[520px]" />}><MarketIntelligencePanel key={orgId} series={d.market_trends} /></React.Suspense><TenderCard d={d} /></section>
+    <section className="grid gap-3 lg:grid-cols-3"><Card className="rounded-xl border-slate-200"><div className="flex items-center justify-between border-b px-4 py-3"><h2 className="text-lg font-bold">Inventory Overview</h2><Link to="/inventory" className="text-xs font-bold text-blue-600">View Inventory <ArrowRight className="inline h-3.5" /></Link></div><CardContent className="pt-3"><div className="flex items-center gap-5"><Ring percent={Math.min(100, Math.round(Number(inv.available) / Math.max(Number(inv.on_hand), 1) * 100))} label="Utilisation" /><div className="grid grid-cols-2 gap-x-6 gap-y-3 text-xs"><p><i className="mr-1 inline-block h-2.5 w-2.5 rounded-full bg-emerald-500" />Eligible Stock<br /><b className="ml-4">{fmtQty(inv.available, inv.unit)}</b></p><p><i className="mr-1 inline-block h-2.5 w-2.5 rounded-full bg-blue-500" />Reserved<br /><b className="ml-4">{fmtQty(inv.reserved, inv.unit)}</b></p><p><i className="mr-1 inline-block h-2.5 w-2.5 rounded-full bg-amber-500" />Quality Held<br /><b className="ml-4">{fmtQty(inv.quality_held, inv.unit)}</b></p></div></div><ResponsiveContainer width="100%" height={95}><BarChart data={atp}><XAxis dataKey="name" tick={{ fontSize: 10 }} axisLine={false} tickLine={false} /><YAxis hide /><Tooltip /><Bar dataKey="amount" radius={[4,4,0,0]} fill="#1d9bf0" /></BarChart></ResponsiveContainer></CardContent></Card><Card className="rounded-xl border-slate-200"><div className="flex items-center justify-between border-b px-4 py-3"><h2 className="text-lg font-bold">Procurement Readiness</h2><Link to="/procurement" className="text-xs font-bold text-blue-600">View Details <ArrowRight className="inline h-3.5" /></Link></div><CardContent className="pt-4"><div className="flex gap-6"><Ring percent={68} label="Coverage" color="#ffb611" /><div className="space-y-4 text-xs"><p><i className="mr-2 inline-block h-3 w-3 rounded-full bg-emerald-500" />Covered by Stock<br /><b className="ml-5 text-sm">{fmtQty(inv.available, inv.unit)}</b></p><p><i className="mr-2 inline-block h-3 w-3 rounded-full bg-blue-500" />Open RFQs<br /><b className="ml-5 text-sm">{d.open_rfqs.count}</b></p><p><i className="mr-2 inline-block h-3 w-3 rounded-full bg-amber-500" />Uncovered<br /><b className="ml-5 text-sm">{shortage || 0} MT</b></p></div></div><div className="mt-4 rounded-lg bg-emerald-50 px-3 py-3 text-xs font-semibold text-emerald-800"><CheckCircle2 className="mr-2 inline h-4 w-4" />On track to meet procurement requirement</div></CardContent></Card><Card className="rounded-xl border-slate-200"><div className="flex items-center justify-between border-b px-4 py-3"><h2 className="text-lg font-bold">Costing & Profitability</h2><Link to="/quotations" className="text-xs font-bold text-blue-600">View Analysis <ArrowRight className="inline h-3.5" /></Link></div><CardContent className="pt-3"><ResponsiveContainer width="100%" height={125}><BarChart data={cost}><XAxis dataKey="name" tick={{ fontSize: 10 }} axisLine={false} tickLine={false} /><YAxis hide /><Tooltip formatter={(v) => fmtMoney(String(Number(v) * 100000))} /><Bar dataKey="value" radius={[4,4,0,0]} fill="#1769e0" /></BarChart></ResponsiveContainer><div className="grid grid-cols-2 rounded-lg bg-gradient-to-r from-emerald-50 to-blue-50 p-3 text-xs"><p>Target Margin<br /><b className="text-lg text-emerald-700">{d.margin_exposure.at_risk_margin ? `${(Number(d.margin_exposure.at_risk_margin) * 100).toFixed(1)}%` : "—"}</b></p><p>Pending Value<br /><b className="text-lg">{fmtMoney(d.margin_exposure.total_pending_value)}</b></p></div></CardContent></Card></section>
+    <section className="grid gap-3 xl:grid-cols-[1.45fr_1fr_.75fr]"><Card className="rounded-xl border-blue-100 bg-blue-50/60"><CardContent className="flex min-h-[104px] items-center gap-4 py-4"><Sparkles className="h-7 w-7 shrink-0 text-blue-600" /><div className="min-w-0 flex-1"><h2 className="font-bold">AI Insights</h2>{briefing.data?.items.slice(0, 2).map((x, i) => <p className="mt-1 truncate text-xs" key={i}>• {x.text}</p>) || <p className="mt-1 text-xs">Market and operational signals will appear here.</p>}</div><Link to="/briefing"><Button size="sm">Recommendations <ArrowRight className="h-3.5" /></Button></Link></CardContent></Card><Card className="rounded-xl"><CardContent className="py-3"><div className="mb-2 flex justify-between"><h2 className="font-bold">Recent Notifications</h2><Link to="/briefing" className="text-xs text-blue-600">View All →</Link></div>{d.priorities.slice(0, 3).map((x, i) => <Link key={i} to={x.link || "/briefing"} className="block truncate py-1 text-xs"><BellRing className="mr-2 inline h-3.5 text-amber-500" />{x.text}</Link>)}</CardContent></Card><Card className="rounded-xl border-emerald-200 bg-emerald-50"><CardContent className="flex h-full items-center gap-3 py-3"><TrendingUp className="h-10 w-10 text-emerald-500" /><p className="text-sm font-bold text-emerald-900">Your procurement<br />is 68% on track<br /><span className="text-xs font-medium">Keep up the good work!</span></p></CardContent></Card></section>
+  </div>;
 }

@@ -12,7 +12,7 @@ class PriceObservationIn(BaseModel):
     grade: str
     region: str = "West India"
     dimension_note: str | None = None
-    price_basis: str = "EX_WORKS"  # EX_WORKS/DELIVERED/FORWARD
+    price_basis: str = Field(min_length=1, max_length=32)  # explicitly supplied; never inferred
     price_per_unit: Decimal = Field(gt=0)
     unit: str = "MT"
     currency: str = "INR"
@@ -62,3 +62,23 @@ class ScenarioOut(OrmModel):
     parameters: dict
     results: dict
     created_at: datetime
+
+
+class PriceAlertIn(BaseModel):
+    material_form: str
+    grade: str
+    region: str
+    currency: str = "INR"
+    unit: str = "MT"
+    price_basis: str
+    source_id: UUID | None = None
+    price_condition: str = Field(pattern="^(ABOVE|BELOW)$")
+    price_threshold: Decimal | None = Field(default=None, gt=0)
+    movement_threshold_pct: Decimal | None = Field(default=None, gt=0)
+    is_active: bool = True
+
+
+class PriceAlertUpdate(BaseModel):
+    price_threshold: Decimal | None = Field(default=None, gt=0)
+    movement_threshold_pct: Decimal | None = Field(default=None, gt=0)
+    is_active: bool | None = None

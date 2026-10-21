@@ -30,7 +30,7 @@ export const Button = React.forwardRef<HTMLButtonElement,
 
 /* ---------- Card ---------- */
 export function Card({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
-  return <div className={cn("rounded-lg border border-border bg-card text-card-foreground shadow-card", className)} {...props} />;
+  return <div className={cn("min-w-0 rounded-lg border border-border bg-card text-card-foreground shadow-card", className)} {...props} />;
 }
 export function CardHeader({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
   return <div className={cn("flex items-start justify-between gap-2 px-4 pt-4 pb-2", className)} {...props} />;

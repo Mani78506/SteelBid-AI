@@ -125,3 +125,13 @@ class RequirementOut(RequirementIn, OrmModel):
     project_id: UUID
     quantity: DecimalStr
     material_name: str | None = None
+
+
+class TenderSupplierSelectionIn(BaseModel):
+    supplier_quote_id: UUID
+    selected_qty: Decimal = Field(gt=0)
+    delivery_terms: str | None = Field(default=None, max_length=128)
+
+
+class TenderSupplierSelectionCancelIn(BaseModel):
+    reason: str = Field(min_length=1, max_length=500)

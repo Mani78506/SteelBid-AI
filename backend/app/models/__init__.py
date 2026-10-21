@@ -5,7 +5,7 @@ from app.models.crm import Customer, CustomerContact, CustomerInquiry, InquiryIt
 from app.models.sales import Quotation, QuotationItem, QuotationVersion, SalesOrder, SalesOrderItem  # noqa: F401
 from app.models.inventory import (InventoryMovement, Reservation, StockLot,  # noqa: F401
                                   StockTransfer, StorageLocation, Warehouse)
-from app.models.market import PriceObservation, PriceScenario, PriceSource  # noqa: F401
+from app.models.market import MarketImportBatch, MarketImportStagedRow, MarketIngestionRun, MarketPriceAlertEvent, MarketPriceAlertRule, MarketSource, PriceObservation, PriceScenario, PriceSource  # noqa: F401
 from app.models.procurement import (GoodsReceipt, PurchaseOrder, PurchaseOrderItem,  # noqa: F401
                                     PurchaseRequest, PurchaseRequestItem, RFQ, Supplier,
                                     SupplierQuote)

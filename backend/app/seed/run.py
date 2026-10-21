@@ -18,8 +18,9 @@ from app.models.sales import SalesOrderItem
 from app.models.fabrication import (BOMItem, BOMVersion, MaterialAllocation,
                                     ProductionOperation, QualityInspection, Routing, WorkOrder)
 from app.models.inventory import Reservation
-from app.models.ops import Dispatch, DispatchItem, Invoice, Payment
-from app.models.projects import BOQItem, Project, ProjectRequirement, Tender
+from app.models.market import MarketPriceAlertRule, PriceObservation, PriceSource
+from app.models.ops import CostEstimate, CostLine, Dispatch, DispatchItem, Invoice, Notification, Payment
+from app.models.projects import BOQItem, Project, ProjectRequirement, Tender, TenderRequirementSnapshot, TenderSupplierSelection
 from app.seed.demo import (CATALOG, NOW, TODAY, get_or_create, seed_catalog, seed_customers,
                            seed_lots, seed_org_materials, seed_prices, seed_quotation_chain,
                            seed_suppliers, seed_warehouses, uid)
@@ -533,6 +534,122 @@ def seed_railbuild_contractor(db, admin: User) -> Organization:
     return org
 
 
+def seed_market_showcase(db, admin: User) -> Organization:
+    """Isolated persisted demo: 200 MT tender / 75 MT eligible / 125 MT shortage."""
+    org = seed_org(db, key="market-showcase", name="[DEMO] SteelBid Market Showcase", profiles=["CONTRACTOR", "TRADER"])
+    mats, whs = seed_org_materials(db, org, "MKT"), seed_warehouses(db, org, "MKT")
+    lots = seed_lots(db, org, mats, whs, [
+        {"key":"beam","form":"BEAM:ISMB-200-E250","lot":"MKT-B-001","qty":"40","cost":"55800"},
+        {"key":"plate","form":"PLATE:MS-PLT-E250-10","lot":"MKT-P-001","qty":"25","cost":"54800"},
+        {"key":"channel","form":"CHANNEL:ISMC-150-E250","lot":"MKT-C-001","qty":"10","cost":"55200"}])
+    src, _ = get_or_create(db, PriceSource, organization_id=org.id, name="Synthetic Demo Data — SteelBid fixture",
+        defaults=dict(id=uid(f"src:{org.id}"), source_type="SYNTHETIC", provider_key="demo-fixture", is_synthetic=True))
+    # Deterministic, persisted one-year histories.  These are demonstration
+    # fixtures only: they remain tenant-scoped and are never mixed into a
+    # customer or provider source.
+    market = [("HRC", "E250", 56000), ("CRC", "E350", 58500), ("TMT", "FE500D", 52700),
+              ("BILLET", "FE500", 52000), ("SCRAP", "IS2062", 42000), ("PLATE", "E250", 54900),
+              ("STRUCTURAL", "E250", 56100), ("BEAM", "E250", 56200), ("CHANNEL", "E250", 55200),
+              ("ANGLE", "E250", 54800), ("WIRE_ROD", "FE500D", 53100), ("GALVANIZED", "E350", 62100)]
+    regional_adjustment = {"North India": 650, "South India": -300, "East India": -850,
+                           "West India": 0, "Central India": 280}
+    for form, grade, base in market:
+      for region, adjustment in regional_adjustment.items():
+        # Keep the primary West-India series daily for a detailed chart and
+        # use weekly regional comparisons to keep the repeatable seed quick.
+        for i in (range(366) if region == "West India" else range(0, 366, 7)):
+            observed = TODAY - timedelta(days=365-i)
+            # Deterministic quarterly cycles: recovery, peak, correction and
+            # stability.  This deliberately avoids a fabricated monotonic trend.
+            quarter = i // 91
+            quarter_move = (-1100, 1400, -1750, 900, 250)[min(quarter, 4)]
+            monthly_wave = ((i // 30) % 4 - 1) * 180
+            weekly_wave = ((i * 37) % 13 - 6) * 32
+            price = Decimal(base + adjustment + quarter_move + monthly_wave + weekly_wave)
+            row, _ = get_or_create(db, PriceObservation, organization_id=org.id, source_id=src.id, material_form=form, grade=grade,
+                region=region, price_basis="EX_WORKS", unit="MT", currency="INR", observed_on=observed,
+                defaults=dict(id=uid(f"price:{org.id}:{form}:{grade}:{region}:{observed}"), price_per_unit=price, is_synthetic=True))
+            row.price_per_unit, row.is_synthetic = price, True
+    get_or_create(db, MarketPriceAlertRule, organization_id=org.id, user_id=admin.id,
+                  material_form="HRC", grade="E250", region="West India", currency="INR", unit="MT",
+                  price_basis="EX_WORKS", source_id=src.id, price_condition="ABOVE",
+                  defaults=dict(id=uid(f"alert:{org.id}:hrc-above"), price_threshold=Decimal("55500"),
+                                movement_threshold_pct=None, is_active=True))
+    suppliers = seed_suppliers(db, org, "MKT", [("SUP-A","[DEMO] Coastal Steel","Mumbai (synthetic)",8,30,["BEAM","PLATE","CHANNEL"],"4.4"),
+        ("SUP-B","[DEMO] Western Rolling","Pune (synthetic)",11,45,["BEAM","PLATE","CHANNEL"],"4.1")])
+    project, _ = get_or_create(db, Project, organization_id=org.id, code="PRJ-DEMO-200",
+        defaults=dict(id=uid(f"project:{org.id}"),name="[DEMO] 200 MT structural package",project_type="INDUSTRIAL",location="Mumbai (synthetic)",estimated_value=Decimal("15000000"),status="ACTIVE"))
+    tender, _ = get_or_create(db, Tender, organization_id=org.id, number="TND-DEMO-200MT",
+        defaults=dict(id=uid(f"tender:{org.id}"),project_id=project.id,title="[DEMO] Structural steel package — 200 MT",customer="[DEMO] Showcase EPC",project_type="STRUCTURAL",location="Mumbai (synthetic)",submission_deadline=NOW+timedelta(days=7),estimated_value=Decimal("15000000"),description="Synthetic demo tender",status="ESTIMATING"))
+    specs=[("1","BEAM:ISMB-200-E250","BEAM","E250","100","60"),("2","PLATE:MS-PLT-E250-10","PLATE","E250","60","35"),("3","CHANNEL:ISMC-150-E250","CHANNEL","E250","40","30")]
+    total_material = Decimal("0")
+    for line,key,form,grade,qty,shortage in specs:
+        mat=mats[key]; q=Decimal(qty); unit_price=Decimal({"BEAM":"56800","PLATE":"55400","CHANNEL":"56000"}[form])
+        bi,_=get_or_create(db,BOQItem,organization_id=org.id,tender_id=tender.id,line_no=line,
+            defaults=dict(id=uid(f"boq:{org.id}:{line}"),raw_description=f"[DEMO] {form} {grade}",form=form,grade=grade,specification={"synthetic_demo":True},quantity=q,unit="MT",material_id=mat.id,review_status="CONFIRMED",source="MANUAL"))
+        snap,_=get_or_create(db,TenderRequirementSnapshot,organization_id=org.id,tender_id=tender.id,source_boq_item_id=bi.id,version=1,
+            defaults=dict(id=uid(f"snap:{org.id}:{line}"),material_id=mat.id,form=form,grade=grade,specification={"synthetic_demo":True},quantity=q,unit="MT",wastage_pct=Decimal("0"),engineering_status="APPROVED",approved_at=NOW,created_at=NOW,updated_at=NOW))
+        quotes=[]
+        for idx,supplier in enumerate(suppliers):
+            quote,_=get_or_create(db,SupplierQuote,organization_id=org.id,supplier_id=supplier.id,material_id=mat.id,
+                defaults=dict(id=uid(f"quote:{org.id}:{line}:{idx}"),quantity=q,unit="MT",unit_price=unit_price+idx*250,currency="INR",freight_per_unit=Decimal(str(400+idx*100)),tax_pct=Decimal("0.18"),tax_recoverable=True,payment_terms_days=30,lead_time_days=8+idx,valid_until=TODAY+timedelta(days=14),status="OPEN"))
+            quotes.append(quote)
+        best=quotes[0]; selected=Decimal(shortage); total_material += selected*(best.unit_price+best.freight_per_unit)
+        get_or_create(db,TenderSupplierSelection,organization_id=org.id,tender_id=tender.id,tender_requirement_snapshot_id=snap.id,supplier_quote_id=best.id,
+            defaults=dict(id=uid(f"selection:{org.id}:{line}"),selected_qty=selected,unit="MT",unit_price=best.unit_price,freight_per_unit=best.freight_per_unit,nonrecoverable_tax_per_unit=Decimal("0"),landed_cost_per_unit=best.unit_price+best.freight_per_unit,valid_until=best.valid_until,delivery_terms="[DEMO] Delivered site",status="SELECTED",selected_by=admin.id,created_at=NOW,updated_at=NOW))
+    est, created=get_or_create(db,CostEstimate,organization_id=org.id,tender_id=tender.id,version=1,
+        defaults=dict(id=uid(f"estimate:{org.id}"),context={"synthetic_demo":True,"note":"Draft costing — not an approved quotation"},status="DRAFT",material_cost=total_material,fabrication_cost=Decimal("1200000"),freight_cost=Decimal("180000"),overhead_cost=Decimal("420000"),total_cost=total_material+Decimal("1800000"),currency="INR",created_by=admin.id))
+    if created:
+        for category,amount in [("MATERIAL",total_material),("FABRICATION",Decimal("1200000")),("FREIGHT",Decimal("180000")),("OVERHEAD",Decimal("420000"))]:
+            db.add(CostLine(id=uid(f"cost:{org.id}:{category}"),organization_id=org.id,cost_estimate_id=est.id,category=category,description=f"[DEMO] {category.title()} cost",amount=amount,source={"synthetic_demo":True}))
+
+    # Historical, fictional tender portfolio.  Tenders keep the native model
+    # fields; publication/costing dates and comparable market observations are
+    # recorded in the existing CostEstimate.context rather than a new schema.
+    portfolio = [
+        ("TND-DEMO-WH-Q1", "[DEMO] Industrial warehouse structural steel", "[DEMO] Meridian Warehousing", "STRUCTURAL", "Pune (synthetic)", "BEAM", "E250", "45", 290, "ESTIMATING"),
+        ("TND-DEMO-PLANT-Q2", "[DEMO] Manufacturing plant expansion", "[DEMO] Axis Components", "INDUSTRIAL", "Nashik (synthetic)", "PLATE", "E250", "38", 205, "SUBMITTED"),
+        ("TND-DEMO-INFRA-Q2", "[DEMO] Infrastructure steel supply", "[DEMO] Horizon Works", "BRIDGE", "Nagpur (synthetic)", "CHANNEL", "E250", "52", 175, "WON"),
+        ("TND-DEMO-SHED-Q3", "[DEMO] Factory shed construction", "[DEMO] Forgefield Estates", "BUILDING", "Ahmedabad (synthetic)", "BEAM", "E250", "60", 330, "LOST"),
+        ("TND-DEMO-FAB-Q3", "[DEMO] Fabrication steel procurement", "[DEMO] Vector Fabrication", "FABRICATION", "Vadodara (synthetic)", "PLATE", "E250", "42", 245, "IN_REVIEW"),
+        ("TND-DEMO-COM-Q4", "[DEMO] Commercial building reinforcement", "[DEMO] Northgate Commercial", "BUILDING", "Indore (synthetic)", "CHANNEL", "E250", "36", 190, "ESTIMATING"),
+    ]
+    for index, (number, title, customer, project_type, location, form, grade, qty, age_days, status) in enumerate(portfolio, start=1):
+        costing_date = TODAY - timedelta(days=age_days)
+        project, _ = get_or_create(db, Project, organization_id=org.id, code=f"PRJ-{number}", defaults=dict(
+            id=uid(f"project:{org.id}:{number}"), name=title, project_type=project_type, location=location,
+            estimated_value=Decimal(qty) * Decimal("85000"), status="ACTIVE", start_date=costing_date))
+        record, _ = get_or_create(db, Tender, organization_id=org.id, number=number, defaults=dict(
+            id=uid(f"tender:{org.id}:{number}"), project_id=project.id, title=title, customer=customer,
+            project_type=project_type, location=location, submission_deadline=NOW + timedelta(days=14 + index) if status == "ESTIMATING" else NOW - timedelta(days=max(1, age_days - 14)),
+            estimated_value=Decimal(qty) * Decimal("85000"), description=f"Synthetic demo tender. Publication date: {costing_date.isoformat()}. Not discovered from a tender portal.", status=status))
+        mat = mats[form]
+        boq, _ = get_or_create(db, BOQItem, organization_id=org.id, tender_id=record.id, line_no="1", defaults=dict(
+            id=uid(f"boq:{org.id}:{number}"), raw_description=f"[DEMO] {form} {grade}", form=form, grade=grade,
+            specification={"synthetic_demo": True}, quantity=Decimal(qty), unit="MT", material_id=mat.id,
+            review_status="CONFIRMED", source="MANUAL"))
+        get_or_create(db, TenderRequirementSnapshot, organization_id=org.id, tender_id=record.id, source_boq_item_id=boq.id, version=1, defaults=dict(
+            id=uid(f"snap:{org.id}:{number}"), material_id=mat.id, form=form, grade=grade, specification={"synthetic_demo":True}, quantity=Decimal(qty), unit="MT", wastage_pct=Decimal("0"), engineering_status="APPROVED", approved_at=NOW, created_at=NOW, updated_at=NOW))
+        benchmark = db.scalar(select(PriceObservation).where(PriceObservation.organization_id == org.id, PriceObservation.source_id == src.id,
+            PriceObservation.material_form == form, PriceObservation.grade == grade, PriceObservation.region == "West India",
+            PriceObservation.currency == "INR", PriceObservation.unit == "MT", PriceObservation.price_basis == "EX_WORKS",
+            PriceObservation.observed_on <= costing_date).order_by(PriceObservation.observed_on.desc()))
+        context = {"synthetic_demo": True, "costing_reference_date": costing_date.isoformat(), "historical_market_benchmark": None}
+        material_cost = Decimal("0")
+        if benchmark is not None:
+            material_cost = benchmark.price_per_unit * Decimal(qty)
+            context["historical_market_benchmark"] = {"observation_id": str(benchmark.id), "observed_on": benchmark.observed_on.isoformat(), "material_form": form, "grade": grade, "region": benchmark.region, "currency": benchmark.currency, "unit": benchmark.unit, "price_basis": benchmark.price_basis, "unit_price": str(benchmark.price_per_unit), "selection_reason": "Latest exact compatible synthetic demonstration observation on or before costing reference date.", "data_age_days": (costing_date - benchmark.observed_on).days}
+        estimate, _ = get_or_create(db, CostEstimate, organization_id=org.id, tender_id=record.id, version=1, defaults=dict(
+            id=uid(f"estimate:{org.id}:{number}"), context=context, status="DRAFT", material_cost=material_cost,
+            freight_cost=Decimal(qty) * Decimal("350"), overhead_cost=Decimal(qty) * Decimal("800"),
+            total_cost=material_cost + Decimal(qty) * Decimal("1150"), currency="INR", created_by=admin.id))
+        if not db.scalar(select(CostLine).where(CostLine.cost_estimate_id == estimate.id)):
+            db.add(CostLine(id=uid(f"cost:{org.id}:{number}:material"), organization_id=org.id, cost_estimate_id=estimate.id, category="MATERIAL", description=f"[DEMO] Historical benchmark reference — {form} {grade}", material_id=mat.id, quantity=Decimal(qty), unit="MT", unit_cost=benchmark.price_per_unit if benchmark else None, amount=material_cost, source=context))
+    for index, (kind,title,body,link) in enumerate([("MARKET","[DEMO] Synthetic steel price movement","Synthetic Demo Data: HRC E250 30-day movement.","/market"),("TENDER","[DEMO] New tender opportunity","Seeded demo event: Industrial warehouse structural steel tender.","/tenders"),("TENDER","[DEMO] Tender deadline","Seeded demo event: 200 MT tender submission is due in 7 days.","/tenders"),("PROCUREMENT","[DEMO] Procurement shortage","Synthetic demo tender has 125 MT to source.","/procurement")]):
+        get_or_create(db,Notification,organization_id=org.id,title=title,defaults=dict(id=uid(f"note:{org.id}:{kind}:{index}"),user_id=admin.id,kind=kind,body=body,link=link,is_read=False))
+    return org
+
+
 def run_seed() -> dict:
     if not settings.demo_mode:
         raise SystemExit("Refusing to seed demo data: DEMO_MODE=false (production safety).")
@@ -553,6 +670,9 @@ def run_seed() -> dict:
         orgs["railbuild"] = seed_org(db, key="railbuild",
                                      name="[DEMO] RailBuild Infrastructure Pvt Ltd",
                                      profiles=["CONTRACTOR", "TRADER"])
+        orgs["market_showcase"] = seed_org(db, key="market-showcase",
+                                            name="[DEMO] SteelBid Market Showcase",
+                                            profiles=["CONTRACTOR", "TRADER"])
 
         # Shared super-demo user (member of all four orgs) for org-switching demo
         seed_user(db, settings.demo_admin_email, "Demo Admin (all companies)",
@@ -568,7 +688,8 @@ def run_seed() -> dict:
         admins = {}
         for key, email in (("apex", "admin@apex.demo"), ("metro", "admin@metro.demo"),
                            ("precision", "admin@precision.demo"),
-                           ("railbuild", "admin@railbuild.demo")):
+                           ("railbuild", "admin@railbuild.demo"),
+                           ("market_showcase", "admin@showcase.demo")):
             admins[key] = seed_user(db, email, f"Demo Admin — {key.title()}",
                                     [(orgs[key], "ADMIN")])
         db.commit()
@@ -578,6 +699,7 @@ def run_seed() -> dict:
         seed_metro_distributor(db, admins["metro"])
         seed_precision_fabricator(db, admins["precision"])
         seed_railbuild_contractor(db, admins["railbuild"])
+        seed_market_showcase(db, admins["market_showcase"])
         db.commit()
 
         from sqlalchemy import func

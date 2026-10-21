@@ -1,25 +1,20 @@
 import { BrowserRouter, Routes, Route, Navigate } from "react-router";
+import { lazy, Suspense } from "react";
 import { useAuth } from "@/lib/auth";
 import AppLayout from "@/components/AppLayout";
 import Login from "@/pages/Login";
-import CommandCenter from "@/pages/CommandCenter";
-import Materials from "@/pages/Materials";
-import Inventory from "@/pages/Inventory";
-import Customers from "@/pages/Customers";
-import Inquiries from "@/pages/Inquiries";
-import Quotations from "@/pages/Quotations";
-import SalesOrders from "@/pages/SalesOrders";
-import Suppliers from "@/pages/Suppliers";
-import Procurement from "@/pages/Procurement";
-import Market from "@/pages/Market";
-import Fabrication from "@/pages/Fabrication";
-import Projects from "@/pages/Projects";
-import Tenders from "@/pages/Tenders";
-import Logistics from "@/pages/Logistics";
-import Finance from "@/pages/Finance";
-import Audit from "@/pages/Audit";
-import Briefing from "@/pages/Briefing";
 import { Skeleton } from "@/components/ui";
+
+const CommandCenter = lazy(() => import("@/pages/CommandCenter"));
+const Materials = lazy(() => import("@/pages/Materials")); const Inventory = lazy(() => import("@/pages/Inventory"));
+const Customers = lazy(() => import("@/pages/Customers")); const Inquiries = lazy(() => import("@/pages/Inquiries"));
+const Quotations = lazy(() => import("@/pages/Quotations")); const SalesOrders = lazy(() => import("@/pages/SalesOrders"));
+const Suppliers = lazy(() => import("@/pages/Suppliers")); const Procurement = lazy(() => import("@/pages/Procurement"));
+const Market = lazy(() => import("@/pages/Market")); const Fabrication = lazy(() => import("@/pages/Fabrication"));
+const Projects = lazy(() => import("@/pages/Projects")); const Tenders = lazy(() => import("@/pages/Tenders"));
+const Logistics = lazy(() => import("@/pages/Logistics")); const Finance = lazy(() => import("@/pages/Finance"));
+const Audit = lazy(() => import("@/pages/Audit")); const Briefing = lazy(() => import("@/pages/Briefing"));
+const PageFallback = () => <div className="p-6"><Skeleton className="h-8 w-56" /><Skeleton className="mt-4 h-64 w-full" /></div>;
 
 function Guard() {
   const { me, loading } = useAuth();
@@ -35,7 +30,7 @@ function Guard() {
 
 export default function App() {
   return (
-    <BrowserRouter>
+    <BrowserRouter><Suspense fallback={<PageFallback />}>
       <Routes>
         <Route path="/login" element={<Login />} />
         <Route element={<Guard />}>
@@ -59,6 +54,6 @@ export default function App() {
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
-    </BrowserRouter>
+    </Suspense></BrowserRouter>
   );
 }

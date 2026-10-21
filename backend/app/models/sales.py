@@ -14,6 +14,9 @@ class Quotation(Base, UUIDPKMixin, TimestampMixin, OrgScopedMixin):
     __table_args__ = (UniqueConstraint("organization_id", "number", name="uq_quotation_number"),)
     inquiry_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("customer_inquiries.id", ondelete="SET NULL"), nullable=True)
+    # Deliberately nullable: no legacy record is inferred to belong to a tender.
+    tender_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tenders.id", ondelete="SET NULL"), nullable=True, index=True)
     customer_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("customers.id", ondelete="RESTRICT"), nullable=False, index=True)
     number: Mapped[str] = mapped_column(String(64), nullable=False)
