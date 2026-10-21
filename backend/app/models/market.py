@@ -29,6 +29,7 @@ class PriceObservation(Base, UUIDPKMixin, TimestampMixin):
     grade: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     region: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     dimension_note: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    price_basis: Mapped[str] = mapped_column(String(32), default="EX_WORKS", index=True)  # EX_WORKS/DELIVERED/FORWAREIGHT
     price_per_unit: Mapped[Decimal] = mapped_column(Numeric(20, 4), nullable=False)
     unit: Mapped[str] = mapped_column(String(16), default="MT")
     currency: Mapped[str] = mapped_column(String(3), default="INR")

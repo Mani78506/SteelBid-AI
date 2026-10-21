@@ -12,6 +12,7 @@ class PriceObservationIn(BaseModel):
     grade: str
     region: str = "West India"
     dimension_note: str | None = None
+    price_basis: str = "EX_WORKS"  # EX_WORKS/DELIVERED/FORWARD
     price_per_unit: Decimal = Field(gt=0)
     unit: str = "MT"
     currency: str = "INR"

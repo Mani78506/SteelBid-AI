@@ -1,8 +1,10 @@
 from datetime import date, timedelta
 from decimal import Decimal
 from uuid import UUID
+import csv
+import io
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, UploadFile, File
 from sqlalchemy import desc, func, select
 
 from app.calc.finance import q_money, q_ratio
@@ -26,7 +28,8 @@ def _obs_out(ctx: TenantContext, o: PriceObservation) -> PriceObservationOut:
 @router.get("/observations", response_model=Page[PriceObservationOut])
 def list_observations(ctx: TenantContext = Depends(require("read")),
                       params: PageParams = Depends(), form: str | None = Query(None),
-                      grade: str | None = Query(None), region: str | None = Query(None)):
+                      grade: str | None = Query(None), region: str | None = Query(None),
+                      price_basis: str | None = Query(None)):
     stmt = select(PriceObservation).where(
         (PriceObservation.organization_id == ctx.org_id)
         | (PriceObservation.organization_id.is_(None)))
@@ -36,6 +39,8 @@ def list_observations(ctx: TenantContext = Depends(require("read")),
         stmt = stmt.where(PriceObservation.grade == grade)
     if region:
         stmt = stmt.where(PriceObservation.region == region)
+    if price_basis:
+        stmt = stmt.where(PriceObservation.price_basis == price_basis)
     stmt = stmt.order_by(desc(PriceObservation.observed_on))
     rows, total = paginate(ctx.db, stmt, params)
     return Page(items=[_obs_out(ctx, o) for o in rows], total=total,
@@ -61,6 +66,80 @@ def add_observation(body: PriceObservationIn,
                  {"after": body.model_dump()})
     ctx.db.commit()
     return _obs_out(ctx, o)
+
+
+@router.post("/observations/import", status_code=201)
+def import_observations(file: UploadFile = File(...),
+                         ctx: TenantContext = Depends(require("market:write"))):
+    """Bulk import price observations from CSV.
+    CSV format: material_form,grade,region,dimension_note,price_basis,price_per_unit,unit,currency,observed_on
+    All rows are attributed to the organization's MANUAL source and marked non-synthetic.
+    """
+    filename = file.filename or ""
+    if not filename.lower().endswith('.csv'):
+        from app.core.errors import bad_request
+        raise bad_request("INVALID_FILE", "Only CSV files are supported")
+
+    src = ctx.db.scalar(select(PriceSource).where(
+        PriceSource.organization_id == ctx.org_id, PriceSource.source_type == "MANUAL"))
+    if src is None:
+        src = PriceSource(organization_id=ctx.org_id, name="Manual entry (team)",
+                          source_type="MANUAL", is_synthetic=False)
+        ctx.db.add(src)
+        ctx.db.flush()
+
+    content = file.file.read().decode('utf-8')
+    reader = csv.DictReader(io.StringIO(content))
+    imported = 0
+    errors = []
+
+    for row_num, row in enumerate(reader, start=2):  # start=2 because header is row 1
+        try:
+            form = row.get('material_form', '').strip()
+            grade = row.get('grade', '').strip()
+            region = row.get('region', '').strip()
+            price_str = row.get('price_per_unit', '0').strip()
+
+            # Validate required fields
+            if not form or not grade or not region:
+                errors.append(f"Row {row_num}: missing required fields (material_form, grade, region)")
+                continue
+
+            # Validate price is positive
+            try:
+                price = Decimal(price_str or '0')
+                if price <= 0:
+                    errors.append(f"Row {row_num}: price_per_unit must be positive, got {price}")
+                    continue
+            except:
+                errors.append(f"Row {row_num}: invalid price_per_unit '{price_str}'")
+                continue
+
+            obs = PriceObservation(
+                organization_id=ctx.org_id,
+                source_id=src.id,
+                is_synthetic=False,
+                material_form=form,
+                grade=grade,
+                region=region,
+                dimension_note=row.get('dimension_note', '').strip() or None,
+                price_basis=row.get('price_basis', 'EX_WORKS').strip() or 'EX_WORKS',
+                price_per_unit=price,
+                unit=row.get('unit', 'MT').strip() or 'MT',
+                currency=row.get('currency', 'INR').strip() or 'INR',
+                observed_on=date.fromisoformat(row.get('observed_on', '').strip() or date.today().isoformat())
+            )
+            ctx.db.add(obs)
+            imported += 1
+        except Exception as e:
+            errors.append(f"Row {row_num}: {str(e)}")
+
+    ctx.db.flush()
+    record_audit(ctx, "market.import_observations", "price_observation", None,
+                 {"imported": imported, "errors": len(errors)})
+    ctx.db.commit()
+
+    return {"imported": imported, "errors": errors, "source_id": str(src.id)}
 
 
 @router.get("/trends", response_model=TrendOut)

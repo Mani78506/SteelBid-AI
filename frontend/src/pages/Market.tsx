@@ -15,8 +15,9 @@ interface Trend { points: TrendPoint[]; latest: string | null; change_pct_30d: s
 interface Freshness { warnings: { material_form: string; grade: string; region: string; latest_observation: string; age_days: number; warning: string }[] }
 interface ScenarioRes { results?: Record<string, string | boolean>; name: string }
 
-const FORMS = ["BEAM", "CHANNEL", "ANGLE", "PLATE", "SHEET", "COIL", "BAR", "PIPE", "TMT", "FASTENER"];
-const GRADES = ["E250", "E350", "E410", "E450", "Fe500", "Fe550", "IS2062", "SS304"];
+const FORMS = ["BEAM", "CHANNEL", "ANGLE", "PLATE", "SHEET", "COIL", "BAR", "PIPE", "TMT", "FASTENER", "HRC", "CRC", "BILLET", "SCRAP"];
+const GRADES = ["E250", "E350", "E410", "E450", "Fe500", "Fe550", "IS2062", "SS304", "Fe415", "Fe500D"];
+const PRICE_BASIS = ["EX_WORKS", "DELIVERED", "FORWARD"];
 
 export default function Market() {
   const qc = useQueryClient();
@@ -24,19 +25,22 @@ export default function Market() {
   const [form, setForm] = React.useState("BEAM");
   const [grade, setGrade] = React.useState("E250");
   const [region, setRegion] = React.useState("West India");
+  const [priceBasis, setPriceBasis] = React.useState("EX_WORKS");
   const [obsOpen, setObsOpen] = React.useState(false);
   const [scenOpen, setScenOpen] = React.useState(false);
+  const [importOpen, setImportOpen] = React.useState(false);
   const [price, setPrice] = React.useState("");
   const [obsDate, setObsDate] = React.useState(new Date().toISOString().slice(0, 10));
   const [scName, setScName] = React.useState("Scenario");
   const [qty, setQty] = React.useState("100");
   const [pct, setPct] = React.useState("0.05");
   const [scenario, setScenario] = React.useState<ScenarioRes | null>(null);
+  const [importFile, setImportFile] = React.useState<File | null>(null);
 
   const freshness = useQuery({ queryKey: ["market-freshness"], queryFn: () => get<Freshness>("/v1/market/freshness-warnings") });
   const obs = useQuery({
-    queryKey: ["observations", form, grade, region],
-    queryFn: () => get<Page<PriceObservation>>(`/v1/market/observations?form=${form}&grade=${grade}&region=${encodeURIComponent(region)}`),
+    queryKey: ["observations", form, grade, region, priceBasis],
+    queryFn: () => get<Page<PriceObservation>>(`/v1/market/observations?form=${form}&grade=${grade}&region=${encodeURIComponent(region)}&price_basis=${priceBasis}`),
   });
   const trend = useQuery({
     queryKey: ["trend", form, grade, region],
@@ -45,7 +49,7 @@ export default function Market() {
 
   const obsMut = useMutation({
     mutationFn: () => post("/v1/market/observations", {
-      material_form: form, grade, region, price_per_unit: price, unit: "MT", observed_on: obsDate,
+      material_form: form, grade, region, price_basis: priceBasis, price_per_unit: price, unit: "MT", observed_on: obsDate,
     }),
     onSuccess: () => {
       toast.push("success", "Observation recorded");
@@ -53,6 +57,25 @@ export default function Market() {
       ["observations", "trend", "market-freshness", "dashboard"].forEach((k) => qc.invalidateQueries({ queryKey: [k] }));
     },
     onError: (e) => toast.push("error", e instanceof Error ? e.message : "Failed"),
+  });
+  const importMut = useMutation({
+    mutationFn: () => {
+      if (!importFile) return Promise.reject("No file selected");
+      const formData = new FormData();
+      formData.append("file", importFile);
+      return fetch("/api/v1/market/observations/import", {
+        method: "POST",
+        credentials: "include",
+        body: formData,
+      }).then((r) => r.json());
+    },
+    onSuccess: (res) => {
+      toast.push("success", `Imported ${res.imported} observations${res.errors.length > 0 ? ` (${res.errors.length} errors)` : ""}`);
+      setImportOpen(false);
+      setImportFile(null);
+      ["observations", "trend", "market-freshness", "dashboard"].forEach((k) => qc.invalidateQueries({ queryKey: [k] }));
+    },
+    onError: (e) => toast.push("error", e instanceof Error ? e.message : "Import failed"),
   });
   const scenMut = useMutation({
     mutationFn: () => post("/v1/market/scenarios", {
@@ -71,6 +94,7 @@ export default function Market() {
     { accessorKey: "material_form", header: "Form" },
     { accessorKey: "grade", header: "Grade" },
     { accessorKey: "region", header: "Region" },
+    { accessorKey: "price_basis", header: "Basis", cell: (c) => <span className="text-xs">{c.getValue() as string}</span> },
     { id: "price", header: "Price", cell: (c) => <span className="font-semibold tabular-nums">{fmtMoney(c.row.original.price_per_unit)}/{c.row.original.unit}</span> },
     { accessorKey: "source_name", header: "Source", cell: (c) => <span className="text-xs">{c.getValue() as string ?? "—"}</span> },
     { id: "synthetic", header: "Label", cell: (c) => <Badge value={c.row.original.is_synthetic ? "UNCONFIRMED" : "VERIFIED"} /> },
@@ -90,6 +114,7 @@ export default function Market() {
         </div>
         <div className="flex gap-2">
           <Button size="sm" variant="outline" onClick={() => setScenOpen(true)}><FlaskConical className="h-3.5 w-3.5" /> Scenario</Button>
+          <Button size="sm" variant="outline" onClick={() => setImportOpen(true)}><Plus className="h-3.5 w-3.5" /> Import CSV</Button>
           <Button size="sm" onClick={() => setObsOpen(true)}><Plus className="h-3.5 w-3.5" /> Record observation</Button>
         </div>
       </div>
@@ -97,6 +122,7 @@ export default function Market() {
       <div className="flex flex-wrap gap-3">
         <div className="w-40"><Select value={form} onChange={(e) => setForm(e.target.value)}>{FORMS.map((f) => <option key={f}>{f}</option>)}</Select></div>
         <div className="w-40"><Select value={grade} onChange={(e) => setGrade(e.target.value)}>{GRADES.map((g) => <option key={g}>{g}</option>)}</Select></div>
+        <div className="w-40"><Select value={priceBasis} onChange={(e) => setPriceBasis(e.target.value)}>{PRICE_BASIS.map((b) => <option key={b}>{b}</option>)}</Select></div>
         <div className="w-48"><Input value={region} onChange={(e) => setRegion(e.target.value)} placeholder="Region" /></div>
         {trend.data?.latest && (
           <div className="flex items-center gap-3 text-sm">
@@ -167,13 +193,34 @@ export default function Market() {
             <div><Label>Grade</Label><Select value={grade} onChange={(e) => setGrade(e.target.value)}>{GRADES.map((g) => <option key={g}>{g}</option>)}</Select></div>
           </div>
           <div className="grid grid-cols-2 gap-3">
+            <div><Label>Price basis</Label><Select value={priceBasis} onChange={(e) => setPriceBasis(e.target.value)}>{PRICE_BASIS.map((b) => <option key={b}>{b}</option>)}</Select></div>
             <div><Label>Region</Label><Input value={region} onChange={(e) => setRegion(e.target.value)} /></div>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
             <div><Label>Observed on</Label><Input type="date" value={obsDate} onChange={(e) => setObsDate(e.target.value)} /></div>
+            <div><Label>Size/spec (optional)</Label><Input placeholder="e.g. 200x100mm" /></div>
           </div>
           <div><Label>Price ₹/MT</Label><Input value={price} onChange={(e) => setPrice(e.target.value)} placeholder="56800" /></div>
           <div className="flex justify-end gap-2">
             <Button variant="outline" onClick={() => setObsOpen(false)}>Cancel</Button>
             <Button loading={obsMut.isPending} disabled={!price} onClick={() => obsMut.mutate()}>Record</Button>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal open={importOpen} onClose={() => setImportOpen(false)} title="Import price observations from CSV">
+        <div className="space-y-3">
+          <p className="rounded bg-blue-50 px-2.5 py-1.5 text-[11px] text-blue-800">
+            Upload a CSV file with columns: material_form, grade, region, dimension_note (optional), price_basis, price_per_unit, unit, currency, observed_on
+          </p>
+          <div>
+            <Label>CSV file</Label>
+            <Input type="file" accept=".csv" onChange={(e) => setImportFile(e.target.files?.[0] ?? null)} />
+          </div>
+          {importFile && <p className="text-xs text-muted-foreground">Selected: {importFile.name}</p>}
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" onClick={() => setImportOpen(false)}>Cancel</Button>
+            <Button loading={importMut.isPending} disabled={!importFile} onClick={() => importMut.mutate()}>Import</Button>
           </div>
         </div>
       </Modal>
