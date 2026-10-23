@@ -14,7 +14,7 @@ test("Showcase customer-demo readiness flow", async ({ page }) => {
   await page.screenshot({ path: "e2e/demo-command-center.png", fullPage: true });
 
   await page.getByRole("link", { name: "Market Prices" }).click();
-  await expect(page.getByText("Market Showcase — Simulated Market Data")).toBeVisible();
+  await expect(page.getByText("Demo / synthetic").first()).toBeVisible();
   await page.getByRole("button", { name: "Regional View" }).click();
   await expect(page.getByText("Regional comparison")).toBeVisible();
   await page.getByRole("button", { name: "Movers" }).click();

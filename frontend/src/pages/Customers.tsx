@@ -3,10 +3,10 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { Plus, Search } from "lucide-react";
+import { Building2, CheckCircle2, Plus, Search, Users2 } from "lucide-react";
 import { get, post, type Page } from "@/lib/api";
 import type { Customer } from "@/lib/types";
-import { Card, Button, Input, Select, Label, Badge, Modal, ErrorState } from "@/components/ui";
+import { Card, Button, Input, Select, Label, Badge, Modal, ErrorState, MetricCard, CompactChartCard, DetailDrawer } from "@/components/ui";
 import { DataTable } from "@/components/DataTable";
 import { useToast } from "@/components/Toast";
 import type { ColumnDef } from "@tanstack/react-table";
@@ -22,6 +22,7 @@ export default function Customers() {
   const toast = useToast();
   const [search, setSearch] = React.useState("");
   const [open, setOpen] = React.useState(false);
+  const [selected, setSelected] = React.useState<Customer | null>(null);
 
   const list = useQuery({
     queryKey: ["customers", search],
@@ -45,6 +46,9 @@ export default function Customers() {
     { id: "terms", header: "Credit terms", cell: (c) => `${c.row.original.credit_terms_days}d` },
     { id: "demo", header: "Data", cell: (c) => c.row.original.is_demo ? <Badge value="UNCONFIRMED" /> : null },
   ];
+  const customers = list.data?.items ?? [];
+  const active = customers.filter((customer) => customer.is_active).length;
+  const categories = Object.entries(customers.reduce<Record<string, number>>((result, customer) => { const key = customer.category || "Uncategorized"; result[key] = (result[key] ?? 0) + 1; return result; }, {})).sort((a, b) => b[1] - a[1]);
 
   return (
     <div className="mx-auto max-w-[1400px] space-y-4">
@@ -53,12 +57,15 @@ export default function Customers() {
           <p className="text-xs text-muted-foreground">{list.data?.total ?? "—"} accounts</p></div>
         <Button size="sm" onClick={() => setOpen(true)}><Plus className="h-3.5 w-3.5" /> New customer</Button>
       </div>
+      <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3"><MetricCard label="Customer accounts" value={list.data?.total ?? "—"} hint="Portfolio records" icon={<Users2 className="h-5 w-5" />} /><MetricCard label="Active customers" value={list.data ? active : "—"} hint="Currently enabled" icon={<CheckCircle2 className="h-5 w-5" />} /><MetricCard label="Customer segments" value={list.data ? categories.length : "—"} hint="Recorded categories" icon={<Building2 className="h-5 w-5" />} /></section>
+      <CompactChartCard title="Customer segmentation" subtitle="Distribution from recorded customer categories"><div className="h-[210px] space-y-3 overflow-y-auto pr-1">{categories.length ? categories.map(([category, count]) => <div key={category}><div className="mb-1 flex justify-between text-xs"><span className="font-medium">{category}</span><span className="text-muted-foreground">{count}</span></div><div className="h-2 overflow-hidden rounded-full bg-muted"><div className="h-full rounded-full bg-primary" style={{ width: `${Math.max(8, (count / customers.length) * 100)}%` }} /></div></div>) : <p className="grid h-full place-items-center text-sm text-muted-foreground">No customer categories recorded.</p>}</div></CompactChartCard>
       <div className="relative max-w-sm">
         <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
         <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search name or code…" className="pl-8" />
       </div>
       {list.error ? <ErrorState error={list.error} onRetry={() => list.refetch()} />
-        : <Card><DataTable columns={cols} data={list.data?.items} loading={list.isLoading} emptyTitle="No customers" /></Card>}
+        : <Card><DataTable columns={cols} data={list.data?.items} loading={list.isLoading} onRowClick={setSelected} dense emptyTitle="No customers" /></Card>}
+      <DetailDrawer open={!!selected} onClose={() => setSelected(null)} title="Customer details">{selected && <div className="space-y-5"><div><p className="text-lg font-semibold">{selected.name}</p><p className="mt-1 text-sm text-muted-foreground">{selected.code}</p><div className="mt-3"><Badge value={selected.is_active ? "ACTIVE" : "CANCELLED"} /></div></div><dl className="grid grid-cols-2 gap-3 rounded-lg border border-border bg-muted/30 p-4 text-sm"><div><dt className="text-xs text-muted-foreground">Category</dt><dd className="mt-1 font-medium">{selected.category || "—"}</dd></div><div><dt className="text-xs text-muted-foreground">Credit terms</dt><dd className="mt-1 font-medium">{selected.credit_terms_days} days</dd></div><div className="col-span-2"><dt className="text-xs text-muted-foreground">GSTIN</dt><dd className="mt-1 font-medium">{selected.gstin || "Not recorded"}</dd></div></dl></div>}</DetailDrawer>
 
       <Modal open={open} onClose={() => setOpen(false)} title="New customer">
         <form onSubmit={form.handleSubmit((v) => createMut.mutate(v))} className="space-y-3">

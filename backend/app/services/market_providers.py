@@ -1,6 +1,6 @@
 """Provider contracts only.  No licensed provider is configured in this repository."""
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Iterable, Protocol
 
@@ -17,6 +17,10 @@ class ProviderObservation:
     observed_on: date | str
     dimension_note: str | None = None
     external_observation_id: str | None = None
+    # Preferred name for provider payloads.  Keep the older field while callers
+    # migrate; both names may not disagree.
+    external_record_id: str | None = None
+    published_at: datetime | None = None
 
 
 class MarketDataProvider(Protocol):

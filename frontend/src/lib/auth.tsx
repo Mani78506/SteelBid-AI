@@ -78,7 +78,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   return (
-    <AuthCtx.Provider value={{ me, orgs, activeOrg, role, loading: meQ.isLoading, login, logout, switchOrg, can }}>
+    <AuthCtx.Provider value={{ me, orgs, activeOrg, role, loading: meQ.isLoading && !me, login, logout, switchOrg, can }}>
       {children}
     </AuthCtx.Provider>
   );

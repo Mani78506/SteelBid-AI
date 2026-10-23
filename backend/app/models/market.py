@@ -40,6 +40,23 @@ class MarketSource(Base, UUIDPKMixin, TimestampMixin):
     redistribution_permitted: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
 
+class MarketSourceProviderConfig(Base, UUIDPKMixin, TimestampMixin):
+    __tablename__ = "market_source_provider_configs"
+    __table_args__ = (UniqueConstraint("source_id", name="uq_market_source_provider_config_source"),)
+    source_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("market_sources.id", ondelete="CASCADE"), nullable=False, index=True)
+    provider_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    provider_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, index=True)
+    endpoint_url: Mapped[str | None] = mapped_column(String(2048))
+    fixture_reference: Mapped[str | None] = mapped_column(String(128))
+    credential_reference: Mapped[str | None] = mapped_column(String(255))
+    access_authorized: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    reuse_authorized: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    parser_id: Mapped[str] = mapped_column(String(64), nullable=False, default="fixture-csv")
+    parser_version: Mapped[str] = mapped_column(String(64), nullable=False, default="fixture-csv-v1")
+    refresh_interval_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=3600)
+
+
 class MarketImportBatch(Base, UUIDPKMixin, TimestampMixin):
     __tablename__ = "market_import_batches"
     __table_args__ = (
@@ -80,6 +97,7 @@ class PriceObservation(Base, UUIDPKMixin, TimestampMixin):
         UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=True, index=True)
     source_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("price_sources.id", ondelete="SET NULL"), nullable=True)
+    source_document_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("market_source_documents.id", ondelete="SET NULL"), nullable=True, index=True)
     material_form: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
     grade: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     region: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
@@ -91,6 +109,71 @@ class PriceObservation(Base, UUIDPKMixin, TimestampMixin):
     observed_on: Mapped[date] = mapped_column(Date, nullable=False, index=True)
     external_observation_id: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
     is_synthetic: Mapped[bool] = mapped_column(Boolean, default=True)
+
+
+class MarketSourceDocument(Base, UUIDPKMixin, TimestampMixin):
+    __tablename__ = "market_source_documents"
+    __table_args__ = (UniqueConstraint("source_id", "sha256_checksum", name="uq_market_source_document_checksum"),)
+    source_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("market_sources.id", ondelete="CASCADE"), nullable=False, index=True)
+    original_document_url: Mapped[str] = mapped_column(String(2048), nullable=False)
+    publisher: Mapped[str] = mapped_column(String(255), nullable=False)
+    document_title: Mapped[str] = mapped_column(String(512), nullable=False)
+    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+    reporting_period: Mapped[str | None] = mapped_column(String(128))
+    retrieved_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    sha256_checksum: Mapped[str] = mapped_column(String(64), nullable=False)
+    parser_version: Mapped[str | None] = mapped_column(String(64))
+    reuse_basis: Mapped[str | None] = mapped_column(String(1000))
+    extraction_status: Mapped[str] = mapped_column(String(24), nullable=False, default="PENDING", index=True)
+
+
+class MarketSourceExtraction(Base, UUIDPKMixin, TimestampMixin):
+    __tablename__ = "market_source_extractions"
+    __table_args__ = (UniqueConstraint("source_document_id", "parser_version", name="uq_market_source_extraction_parser"),)
+    source_document_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("market_source_documents.id", ondelete="CASCADE"), nullable=False, index=True)
+    parser_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(String(24), nullable=False, index=True)
+    extracted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    error_summary: Mapped[str | None] = mapped_column(String(2000))
+    records_found: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    records_accepted: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+
+class MarketSourceRefreshState(Base, UUIDPKMixin, TimestampMixin):
+    __tablename__ = "market_source_refresh_states"
+    __table_args__ = (UniqueConstraint("source_id", name="uq_market_source_refresh_source"),)
+    source_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("market_sources.id", ondelete="CASCADE"), nullable=False, index=True)
+    last_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_success_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    latest_document_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("market_source_documents.id", ondelete="SET NULL"))
+    etag: Mapped[str | None] = mapped_column(String(512))
+    last_modified: Mapped[str | None] = mapped_column(String(512))
+    latest_checksum: Mapped[str | None] = mapped_column(String(64))
+    error_state: Mapped[str | None] = mapped_column(String(2000))
+    next_scheduled_check: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+
+class MarketSourceClaim(Base, UUIDPKMixin, TimestampMixin):
+    __tablename__ = "market_source_claims"
+    __table_args__ = (UniqueConstraint("source_id", name="uq_market_source_claim_source"),)
+    source_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("market_sources.id", ondelete="CASCADE"), nullable=False, index=True)
+    claim_token: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    claim_owner: Mapped[str] = mapped_column(String(128), nullable=False)
+    claimed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+
+
+class GlobalCommodityBenchmark(Base, UUIDPKMixin, TimestampMixin):
+    """Public/global benchmarks; deliberately separate from Indian steel prices."""
+    __tablename__ = "global_commodity_benchmarks"
+    __table_args__ = (UniqueConstraint("organization_id", "source_document_id", "commodity_name", "observed_on", name="uq_global_benchmark_document_point"),)
+    organization_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True)
+    source_document_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("market_source_documents.id", ondelete="RESTRICT"), nullable=False, index=True)
+    commodity_name: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    original_unit: Mapped[str] = mapped_column(String(32), nullable=False)
+    currency: Mapped[str] = mapped_column(String(3), nullable=False)
+    price_value: Mapped[Decimal] = mapped_column(Numeric(20, 6), nullable=False)
+    observed_on: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    external_record_id: Mapped[str] = mapped_column(String(255), nullable=False)
 
 
 class MarketIngestionRun(Base, UUIDPKMixin, TimestampMixin):

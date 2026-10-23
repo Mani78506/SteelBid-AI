@@ -7,7 +7,7 @@ import { X } from "lucide-react";
 type BtnVariant = "default" | "secondary" | "outline" | "ghost" | "destructive" | "accent";
 export const Button = React.forwardRef<HTMLButtonElement,
   React.ButtonHTMLAttributes<HTMLButtonElement> & { variant?: BtnVariant; size?: "sm" | "md" | "lg"; loading?: boolean }
->(function Button({ className, variant = "default", size = "md", loading, children, disabled, ...props }, ref) {
+>(function Button({ className, variant = "default", size = "md", loading, children, disabled, type, ...props }, ref) {
   const variants: Record<BtnVariant, string> = {
     default: "bg-primary text-primary-foreground hover:bg-primary-700 shadow-sm",
     accent: "bg-accent text-accent-foreground hover:opacity-90 shadow-sm",
@@ -18,7 +18,7 @@ export const Button = React.forwardRef<HTMLButtonElement,
   };
   const sizes = { sm: "h-8 px-3 text-xs", md: "h-9 px-4 text-sm", lg: "h-10 px-5 text-sm" };
   return (
-    <button ref={ref} disabled={disabled || loading}
+    <button ref={ref} type={type ?? "button"} disabled={disabled || loading}
       className={cn("inline-flex items-center justify-center gap-1.5 rounded-md font-medium transition-colors",
         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50 disabled:pointer-events-none",
         variants[variant], sizes[size], className)} {...props}>
@@ -40,6 +40,19 @@ export function CardTitle({ className, ...props }: React.HTMLAttributes<HTMLHead
 }
 export function CardContent({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
   return <div className={cn("px-4 pb-4", className)} {...props} />;
+}
+
+export function MetricCard({ label, value, hint, icon, className }: { label: string; value: React.ReactNode; hint?: string; icon?: React.ReactNode; className?: string }) {
+  return <Card className={cn("p-4", className)}><div className="flex items-start justify-between gap-3"><div><p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{label}</p><p className="mt-1 text-2xl font-semibold tracking-tight tabular-nums">{value}</p>{hint && <p className="mt-1 text-xs text-muted-foreground">{hint}</p>}</div>{icon && <div className="rounded-lg bg-primary-50 p-2.5 text-primary">{icon}</div>}</div></Card>;
+}
+
+export function CompactChartCard({ title, subtitle, children, className }: { title: string; subtitle?: string; children: React.ReactNode; className?: string }) {
+  return <Card className={cn("overflow-hidden", className)}><CardHeader><div><CardTitle>{title}</CardTitle>{subtitle && <p className="mt-0.5 text-xs text-muted-foreground">{subtitle}</p>}</div></CardHeader><CardContent>{children}</CardContent></Card>;
+}
+
+export function DetailDrawer({ open, onClose, title, children }: { open: boolean; onClose: () => void; title: string; children: React.ReactNode }) {
+  React.useEffect(() => { const close = (event: KeyboardEvent) => event.key === "Escape" && onClose(); if (open) window.addEventListener("keydown", close); return () => window.removeEventListener("keydown", close); }, [open, onClose]);
+  return <AnimatePresence>{open && <motion.div className="fixed inset-0 z-50" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}><button aria-label="Close details" className="absolute inset-0 cursor-default bg-slate-950/35" onClick={onClose} /><motion.aside role="dialog" aria-modal="true" aria-label={title} initial={{ x: "100%" }} animate={{ x: 0 }} exit={{ x: "100%" }} transition={{ type: "tween", duration: 0.2 }} className="absolute right-0 top-0 flex h-full w-full max-w-md flex-col bg-card shadow-2xl"><div className="flex items-center justify-between border-b border-border px-5 py-4"><h2 className="text-base font-semibold">{title}</h2><button onClick={onClose} aria-label="Close details" className="rounded p-1 hover:bg-muted"><X className="h-5 w-5" /></button></div><div className="flex-1 overflow-y-auto p-5">{children}</div></motion.aside></motion.div>}</AnimatePresence>;
 }
 
 /* ---------- Input / Select / Label ---------- */

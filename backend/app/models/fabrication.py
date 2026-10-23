@@ -18,6 +18,10 @@ class BOMVersion(Base, UUIDPKMixin, TimestampMixin, OrgScopedMixin):
     status: Mapped[str] = mapped_column(String(16), default="DRAFT")  # DRAFT/APPROVED/OBSOLETE
     estimated_material_cost: Mapped[Decimal] = mapped_column(Numeric(20, 4), default=0)
     estimated_total_cost: Mapped[Decimal] = mapped_column(Numeric(20, 4), default=0)
+    # Nullable links keep all pre-workflow BOM revisions valid while making tender BOMs traceable.
+    tender_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tenders.id", ondelete="SET NULL"), nullable=True, index=True)
+    requirement_snapshot_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
     approved_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
     approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
@@ -32,6 +36,9 @@ class BOMItem(Base, UUIDPKMixin, TimestampMixin, OrgScopedMixin):
     unit: Mapped[str] = mapped_column(String(16), default="MT")
     theoretical_waste_pct: Mapped[Decimal] = mapped_column(Numeric(8, 6), default=0)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    tender_requirement_snapshot_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tender_requirement_snapshots.id", ondelete="SET NULL"),
+        nullable=True, index=True)
 
 
 class Routing(Base, UUIDPKMixin, TimestampMixin, OrgScopedMixin):

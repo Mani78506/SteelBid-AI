@@ -1,5 +1,5 @@
 import { BrowserRouter, Routes, Route, Navigate } from "react-router";
-import { lazy, Suspense } from "react";
+import { lazy, Suspense, type ReactNode } from "react";
 import { useAuth } from "@/lib/auth";
 import AppLayout from "@/components/AppLayout";
 import Login from "@/pages/Login";
@@ -29,31 +29,35 @@ function Guard() {
 }
 
 export default function App() {
+  // Keep the application shell mounted while a route chunk is loading. A
+  // root-level Suspense boundary replaces the whole screen during navigation.
+  const page = (content: ReactNode) => <Suspense fallback={<PageFallback />}>{content}</Suspense>;
+
   return (
-    <BrowserRouter><Suspense fallback={<PageFallback />}>
+    <BrowserRouter>
       <Routes>
         <Route path="/login" element={<Login />} />
         <Route element={<Guard />}>
-          <Route index element={<CommandCenter />} />
-          <Route path="/briefing" element={<Briefing />} />
-          <Route path="/customers" element={<Customers />} />
-          <Route path="/inquiries" element={<Inquiries />} />
-          <Route path="/quotations" element={<Quotations />} />
-          <Route path="/sales-orders" element={<SalesOrders />} />
-          <Route path="/materials" element={<Materials />} />
-          <Route path="/inventory" element={<Inventory />} />
-          <Route path="/suppliers" element={<Suppliers />} />
-          <Route path="/procurement" element={<Procurement />} />
-          <Route path="/market" element={<Market />} />
-          <Route path="/fabrication" element={<Fabrication />} />
-          <Route path="/projects" element={<Projects />} />
-          <Route path="/tenders" element={<Tenders />} />
-          <Route path="/logistics" element={<Logistics />} />
-          <Route path="/finance" element={<Finance />} />
-          <Route path="/audit" element={<Audit />} />
+          <Route index element={page(<CommandCenter />)} />
+          <Route path="/briefing" element={page(<Briefing />)} />
+          <Route path="/customers" element={page(<Customers />)} />
+          <Route path="/inquiries" element={page(<Inquiries />)} />
+          <Route path="/quotations" element={page(<Quotations />)} />
+          <Route path="/sales-orders" element={page(<SalesOrders />)} />
+          <Route path="/materials" element={page(<Materials />)} />
+          <Route path="/inventory" element={page(<Inventory />)} />
+          <Route path="/suppliers" element={page(<Suppliers />)} />
+          <Route path="/procurement" element={page(<Procurement />)} />
+          <Route path="/market" element={page(<Market />)} />
+          <Route path="/fabrication" element={page(<Fabrication />)} />
+          <Route path="/projects" element={page(<Projects />)} />
+          <Route path="/tenders" element={page(<Tenders />)} />
+          <Route path="/logistics" element={page(<Logistics />)} />
+          <Route path="/finance" element={page(<Finance />)} />
+          <Route path="/audit" element={page(<Audit />)} />
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
-    </Suspense></BrowserRouter>
+    </BrowserRouter>
   );
 }

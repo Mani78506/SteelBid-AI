@@ -1,7 +1,7 @@
 import uuid
 from datetime import date, datetime
 from decimal import Decimal
-from sqlalchemy import Date, DateTime, ForeignKey, Integer, Numeric, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Integer, Numeric, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -40,6 +40,14 @@ class Tender(Base, UUIDPKMixin, TimestampMixin, OrgScopedMixin):
     currency: Mapped[str] = mapped_column(String(3), default="INR")
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     status: Mapped[str] = mapped_column(String(24), default="DRAFT", index=True)
+    # Discovery provenance is intentionally independent from a tenant's commercial data.
+    # These nullable/defaulted fields keep all existing tender records backward compatible.
+    is_demo: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    data_classification: Mapped[str] = mapped_column(String(32), default="OPERATIONAL", nullable=False, index=True)
+    source_type: Mapped[str] = mapped_column(String(32), default="USER_UPLOAD", nullable=False)
+    original_source_url: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    publication_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    rate_approval_status: Mapped[str] = mapped_column(String(32), default="NOT_APPLICABLE", nullable=False)
 
 
 class TenderDocument(Base, UUIDPKMixin, TimestampMixin, OrgScopedMixin):
@@ -119,6 +127,28 @@ class TenderRequirementSnapshot(Base, UUIDPKMixin, TimestampMixin, OrgScopedMixi
     wastage_pct: Mapped[Decimal] = mapped_column(Numeric(8, 6), default=0)
     engineering_status: Mapped[str] = mapped_column(String(16), default="APPROVED")
     approved_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class TenderWorkflow(Base, UUIDPKMixin, TimestampMixin, OrgScopedMixin):
+    """Tenant-scoped orchestration record; legacy tender records remain independent."""
+    __tablename__ = "tender_workflows"
+    __table_args__ = (UniqueConstraint("organization_id", "tender_id", name="uq_tender_workflow"),)
+    tender_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tenders.id", ondelete="CASCADE"), nullable=False, index=True)
+    requirement_snapshot_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    bom_version_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("bom_versions.id", ondelete="SET NULL"), nullable=True, index=True)
+    cost_estimate_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("cost_estimates.id", ondelete="SET NULL"), nullable=True, index=True)
+    quotation_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("quotations.id", ondelete="SET NULL"), nullable=True, index=True)
+    customer_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("customers.id", ondelete="SET NULL"), nullable=True, index=True)
+    use_demo_commercial_rates: Mapped[bool] = mapped_column(Boolean, default=False)
+    submission_status: Mapped[str] = mapped_column(String(24), default="NOT_READY", index=True)
+    external_submission_reference: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    external_submitted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    submission_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 class TenderSupplierSelection(Base, UUIDPKMixin, TimestampMixin, OrgScopedMixin):

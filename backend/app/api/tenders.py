@@ -1,10 +1,13 @@
 import os
 import uuid as uuid_mod
+from io import BytesIO
 from datetime import datetime, timezone
 from decimal import Decimal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, UploadFile, File
+from fastapi.responses import Response
+from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 
 from app.ai.extraction import detect_injection_warnings, extract_text_pages, parse_boq_lines
@@ -14,14 +17,20 @@ from app.core.errors import bad_request, conflict, not_found
 from app.core.pagination import Page, PageParams, paginate
 from app.models.materials import OrganizationMaterial
 from app.models.inventory import StockLot
-from app.models.procurement import Supplier, SupplierQuote
-from app.models.ops import AIJob, CostEstimate
-from app.models.projects import (BOQItem, ExtractionEvidence, Project, Tender, TenderDocument, TenderRequirementSnapshot, TenderSupplierSelection)
+from app.models.procurement import RFQ, Supplier, SupplierQuote
+from app.models.ops import AIJob, CostEstimate, CostLine
+from app.models.projects import (BOQItem, ExtractionEvidence, Project, Tender, TenderDocument, TenderRequirementSnapshot, TenderSupplierSelection, TenderWorkflow)
+from app.models.fabrication import BOMItem, BOMVersion
+from app.models.crm import Customer
+from app.models.sales import QuotationVersion
 from app.schemas.projects import (BOQItemIn, BOQItemOut, BOQReviewIn, EvidenceOut,
                                   TenderDocumentOut, TenderIn, TenderOut, TenderStatusIn,
                                   TenderUpdate, TenderSupplierSelectionIn, TenderSupplierSelectionCancelIn)
 from app.services.audit import record_audit
 from app.services.tender_costing import compatible_offer
+from app.services.quotations import create_quotation
+from app.schemas.sales import QuotationCreateIn, QuotationItemIn
+from app.calc.finance import ZERO, cost_estimate_total, q_money, q_qty
 
 router = APIRouter(prefix="/tenders", tags=["tenders"])
 settings = get_settings()
@@ -33,6 +42,69 @@ TENDER_FLOW = {
     "BID_SUBMITTED": {"WON", "LOST"},
     "WON": set(), "LOST": set(), "CANCELLED": set(),
 }
+
+
+class DemoRateIn(BaseModel):
+    tender_requirement_snapshot_id: UUID
+    unit_rate: Decimal = Field(gt=0)
+
+
+class WorkflowEstimateIn(BaseModel):
+    demo_rates: list[DemoRateIn] = Field(min_length=1)
+    processing_cost: Decimal = Field(default=Decimal("0"), ge=0)
+    freight_cost: Decimal = Field(default=Decimal("0"), ge=0)
+    testing_cost: Decimal = Field(default=Decimal("0"), ge=0)
+    overhead_cost: Decimal = Field(default=Decimal("0"), ge=0)
+    contingency_pct: Decimal = Field(default=Decimal("0"), ge=0, lt=1)
+
+
+class WorkflowCustomerIn(BaseModel):
+    customer_id: UUID
+
+
+class WorkflowQuotationIn(BaseModel):
+    target_margin: Decimal = Field(default=Decimal("0.12"), ge=0, lt=1)
+
+
+class WorkflowSubmissionIn(BaseModel):
+    status: str = Field(pattern="^(READY|MANUALLY_SUBMITTED|NOT_SUBMITTED)$")
+    external_submission_reference: str | None = Field(default=None, max_length=128)
+    submission_notes: str | None = Field(default=None, max_length=2000)
+
+
+def _workflow(ctx: TenantContext, tender_id: UUID, *, create: bool = False) -> TenderWorkflow | None:
+    row = ctx.db.scalar(select(TenderWorkflow).where(
+        TenderWorkflow.organization_id == ctx.org_id, TenderWorkflow.tender_id == tender_id))
+    if row is None and create:
+        now = datetime.now(timezone.utc)
+        row = TenderWorkflow(organization_id=ctx.org_id, tender_id=tender_id,
+                             created_at=now, updated_at=now)
+        ctx.db.add(row)
+        ctx.db.flush()
+    return row
+
+
+def _workflow_out(ctx: TenantContext, workflow: TenderWorkflow) -> dict:
+    shortages = []
+    if workflow.bom_version_id:
+        for item in ctx.db.scalars(select(BOMItem).where(BOMItem.bom_version_id == workflow.bom_version_id)).all():
+            available = Decimal(str(ctx.db.scalar(select(func.coalesce(func.sum(
+                StockLot.on_hand_qty - StockLot.reserved_qty), 0)).where(
+                StockLot.organization_id == ctx.org_id, StockLot.material_id == item.material_id,
+                StockLot.quality_status == "OK")) or 0))
+            shortages.append({"bom_item_id": str(item.id), "snapshot_id": str(item.tender_requirement_snapshot_id) if item.tender_requirement_snapshot_id else None,
+                              "material_id": str(item.material_id), "required_quantity": str(item.quantity),
+                              "available_quantity": str(available), "shortage_quantity": str(max(ZERO, item.quantity - available)), "unit": item.unit})
+    return {"id": str(workflow.id), "tender_id": str(workflow.tender_id),
+            "requirement_snapshot_version": workflow.requirement_snapshot_version,
+            "bom_version_id": str(workflow.bom_version_id) if workflow.bom_version_id else None,
+            "cost_estimate_id": str(workflow.cost_estimate_id) if workflow.cost_estimate_id else None,
+            "quotation_id": str(workflow.quotation_id) if workflow.quotation_id else None,
+            "customer_id": str(workflow.customer_id) if workflow.customer_id else None,
+            "use_demo_commercial_rates": workflow.use_demo_commercial_rates,
+            "submission_status": workflow.submission_status,
+            "external_submission_reference": workflow.external_submission_reference,
+            "submission_notes": workflow.submission_notes, "shortages": shortages}
 
 
 @router.post("/{tender_id}/requirement-snapshots", status_code=201)
@@ -51,7 +123,9 @@ def snapshot_confirmed_requirements(tender_id: UUID, ctx: TenantContext = Depend
         ctx.db.add(TenderRequirementSnapshot(organization_id=ctx.org_id, tender_id=tender_id,
             source_boq_item_id=boq.id, version=version, material_id=boq.material_id,
             form=boq.form, grade=boq.grade, specification=boq.specification,
-            quantity=boq.quantity, unit=boq.unit, approved_at=now))
+            quantity=boq.quantity, unit=boq.unit, approved_at=now,
+            # Older databases have NOT NULL timestamp columns without server defaults.
+            created_at=now, updated_at=now))
     ctx.db.flush()
     record_audit(ctx, "tender.requirements_snapshot", "tender", tender_id,
                  {"after": {"version": version, "lines": len(rows)}})
@@ -70,6 +144,360 @@ def list_requirement_snapshots(tender_id: UUID, ctx: TenantContext = Depends(req
              "form": r.form, "grade": r.grade, "specification": r.specification,
              "quantity": str(r.quantity), "unit": r.unit, "wastage_pct": str(r.wastage_pct),
              "engineering_status": r.engineering_status, "approved_at": r.approved_at.isoformat()} for r in rows]
+
+
+@router.get("/{tender_id}/workflow")
+def get_workflow(tender_id: UUID, ctx: TenantContext = Depends(require("read"))):
+    _get_tender(ctx, tender_id)
+    workflow = _workflow(ctx, tender_id)
+    return _workflow_out(ctx, workflow) if workflow else {"tender_id": str(tender_id), "status": "NOT_STARTED", "shortages": []}
+
+
+@router.post("/{tender_id}/workflow/bom", status_code=201)
+def generate_workflow_bom(tender_id: UUID, ctx: TenantContext = Depends(require("fabrication:write"))):
+    """Create one traceable BOM from the latest approved requirement snapshot."""
+    tender = _get_tender(ctx, tender_id)
+    workflow = _workflow(ctx, tender_id, create=True)
+    if workflow.bom_version_id:
+        return _workflow_out(ctx, workflow)
+    version = ctx.db.scalar(select(func.max(TenderRequirementSnapshot.version)).where(
+        TenderRequirementSnapshot.organization_id == ctx.org_id,
+        TenderRequirementSnapshot.tender_id == tender_id))
+    if version is None:
+        raise bad_request("MISSING_REQUIREMENT_SNAPSHOT", "Approve and snapshot BOQ requirements before generating a BOM")
+    snapshots = ctx.db.scalars(select(TenderRequirementSnapshot).where(
+        TenderRequirementSnapshot.organization_id == ctx.org_id,
+        TenderRequirementSnapshot.tender_id == tender_id,
+        TenderRequirementSnapshot.version == version).order_by(TenderRequirementSnapshot.created_at)).all()
+    if not snapshots:
+        raise bad_request("MISSING_REQUIREMENT_SNAPSHOT", "No approved requirement snapshots were found")
+    bom = BOMVersion(organization_id=ctx.org_id, tender_id=tender_id,
+                     requirement_snapshot_version=version,
+                     bom_code=f"TND-{tender.number}-BOM", product_name=tender.title,
+                     version_no=1, status="DRAFT")
+    ctx.db.add(bom)
+    ctx.db.flush()
+    for req in snapshots:
+        material = ctx.db.get(OrganizationMaterial, req.material_id)
+        if material is None or material.organization_id != ctx.org_id:
+            raise bad_request("UNRESOLVED_MATERIAL", f"Snapshot {req.id} is not mapped to a tenant material")
+        quantity = q_qty(req.quantity * (Decimal("1") + req.wastage_pct))
+        ctx.db.add(BOMItem(organization_id=ctx.org_id, bom_version_id=bom.id,
+                           tender_requirement_snapshot_id=req.id, material_id=req.material_id,
+                           quantity=quantity, unit=req.unit, theoretical_waste_pct=req.wastage_pct,
+                           notes=f"Tender BOQ line {req.source_boq_item_id}; snapshot v{version}"))
+    workflow.requirement_snapshot_version = version
+    workflow.bom_version_id = bom.id
+    record_audit(ctx, "tender.workflow.bom", "tender_workflow", workflow.id,
+                 {"after": {"bom_version_id": str(bom.id), "snapshot_version": version}})
+    ctx.db.commit()
+    return _workflow_out(ctx, workflow)
+
+
+@router.post("/{tender_id}/workflow/customer")
+def select_workflow_customer(tender_id: UUID, body: WorkflowCustomerIn,
+                             ctx: TenantContext = Depends(require("quotations:write"))):
+    _get_tender(ctx, tender_id)
+    customer = ctx.db.scalar(select(Customer).where(Customer.id == body.customer_id,
+                                                     Customer.organization_id == ctx.org_id,
+                                                     Customer.is_active.is_(True)))
+    if customer is None:
+        raise not_found("Active customer")
+    workflow = _workflow(ctx, tender_id, create=True)
+    workflow.customer_id = customer.id
+    record_audit(ctx, "tender.workflow.customer", "tender_workflow", workflow.id,
+                 {"after": {"customer_id": str(customer.id)}})
+    ctx.db.commit()
+    return _workflow_out(ctx, workflow)
+
+
+@router.post("/{tender_id}/workflow/estimate", status_code=201)
+def create_workflow_estimate(tender_id: UUID, body: WorkflowEstimateIn,
+                             ctx: TenantContext = Depends(require("quotations:write"))):
+    """Persist a draft estimate using explicitly-labelled demonstration commercial rates only."""
+    _get_tender(ctx, tender_id)
+    workflow = _workflow(ctx, tender_id, create=True)
+    if workflow.cost_estimate_id:
+        return _workflow_out(ctx, workflow)
+    if not workflow.bom_version_id:
+        raise bad_request("MISSING_BOM", "Generate the tender BOM before creating an estimate")
+    rates = {r.tender_requirement_snapshot_id: r.unit_rate for r in body.demo_rates}
+    items = ctx.db.scalars(select(BOMItem).where(BOMItem.bom_version_id == workflow.bom_version_id)).all()
+    missing = [str(i.tender_requirement_snapshot_id) for i in items if i.tender_requirement_snapshot_id not in rates]
+    if missing:
+        raise bad_request("MISSING_COMMERCIAL_RATES", "Provide a demo commercial rate for every BOM requirement", {"snapshot_ids": missing})
+    estimate = CostEstimate(organization_id=ctx.org_id, tender_id=tender_id, status="DRAFT",
+                            context={"tender_workflow_id": str(workflow.id), "rate_basis": "DEMO_COMMERCIAL_RATE", "approval_required": True},
+                            overhead_cost=q_money(body.overhead_cost), contingency_pct=body.contingency_pct,
+                            currency=ctx.organization.currency_code, created_by=ctx.user_id)
+    ctx.db.add(estimate)
+    ctx.db.flush()
+    material_total = ZERO
+    for item in items:
+        rate = rates[item.tender_requirement_snapshot_id]
+        amount = q_money(item.quantity * rate)
+        material_total += amount
+        ctx.db.add(CostLine(organization_id=ctx.org_id, cost_estimate_id=estimate.id, category="MATERIAL",
+                            description=f"Demo commercial rate for BOM item {item.id}", material_id=item.material_id,
+                            quantity=item.quantity, unit=item.unit, unit_cost=rate, amount=amount,
+                            source={"kind": "DEMO_COMMERCIAL_RATE", "tender_requirement_snapshot_id": str(item.tender_requirement_snapshot_id), "approved_supplier_quote": False}))
+    extras = (("FABRICATION", "Processing", body.processing_cost), ("FREIGHT", "Freight", body.freight_cost),
+              ("SUBCONTRACTING", "Testing", body.testing_cost))
+    for category, description, amount in extras:
+        if amount:
+            ctx.db.add(CostLine(organization_id=ctx.org_id, cost_estimate_id=estimate.id, category=category,
+                                description=description, amount=q_money(amount), source={"kind": "DEMO_COMMERCIAL_RATE"}))
+    subtotal, total = cost_estimate_total(material=material_total, fabrication=body.processing_cost,
+                                          freight=body.freight_cost, subcontracting=body.testing_cost,
+                                          overhead=body.overhead_cost, contingency_pct=body.contingency_pct)
+    estimate.material_cost = q_money(material_total); estimate.fabrication_cost = q_money(body.processing_cost)
+    estimate.freight_cost = q_money(body.freight_cost); estimate.subcontracting_cost = q_money(body.testing_cost)
+    estimate.contingency_amount = q_money(total - subtotal); estimate.total_cost = total
+    workflow.cost_estimate_id = estimate.id; workflow.use_demo_commercial_rates = True
+    record_audit(ctx, "tender.workflow.estimate", "tender_workflow", workflow.id,
+                 {"after": {"cost_estimate_id": str(estimate.id), "total_cost": str(total), "demo_rates": True}})
+    ctx.db.commit()
+    return _workflow_out(ctx, workflow)
+
+
+@router.post("/{tender_id}/workflow/quotation", status_code=201)
+def create_workflow_quotation(tender_id: UUID, body: WorkflowQuotationIn,
+                              ctx: TenantContext = Depends(require("quotations:write"))):
+    _get_tender(ctx, tender_id)
+    workflow = _workflow(ctx, tender_id)
+    if workflow is None or not workflow.bom_version_id or not workflow.cost_estimate_id:
+        raise bad_request("MISSING_ESTIMATE", "Generate the tender BOM and estimate before quotation")
+    if workflow.quotation_id:
+        return _workflow_out(ctx, workflow)
+    if workflow.customer_id is None:
+        raise bad_request("MISSING_CUSTOMER", "Select an existing authorized customer before generating a quotation")
+    estimate = ctx.db.scalar(select(CostEstimate).where(CostEstimate.id == workflow.cost_estimate_id,
+        CostEstimate.organization_id == ctx.org_id))
+    if estimate is None: raise not_found("Cost estimate")
+    items = ctx.db.scalars(select(BOMItem).where(BOMItem.bom_version_id == workflow.bom_version_id)).all()
+    material_total = sum((i.quantity for i in items), ZERO)
+    if material_total <= 0: raise bad_request("EMPTY_BOM", "Cannot quote an empty BOM")
+    # Allocate non-material costs proportionally so the existing quotation service produces the persisted estimate total.
+    rate_by_snapshot = {line.source.get("tender_requirement_snapshot_id"): line.unit_cost for line in ctx.db.scalars(
+        select(CostLine).where(CostLine.cost_estimate_id == estimate.id, CostLine.category == "MATERIAL")).all()}
+    base_cost = sum((i.quantity * Decimal(str(rate_by_snapshot.get(str(i.tender_requirement_snapshot_id), 0))) for i in items), ZERO)
+    uplift = (estimate.total_cost / base_cost) if base_cost > 0 else Decimal("1")
+    quote_items = [QuotationItemIn(material_id=i.material_id, description=f"Tender BOM item {i.id}", quantity=i.quantity,
+                                   unit=i.unit, unit_cost=q_money(Decimal(str(rate_by_snapshot[str(i.tender_requirement_snapshot_id)])) * uplift)) for i in items]
+    quotation = create_quotation(ctx, QuotationCreateIn(customer_id=workflow.customer_id,
+        target_margin=body.target_margin, items=quote_items))
+    quotation.tender_id = tender_id
+    version = ctx.db.scalar(select(QuotationVersion).where(QuotationVersion.quotation_id == quotation.id,
+        QuotationVersion.version_no == 1))
+    if version: version.cost_estimate_id = estimate.id
+    workflow.quotation_id = quotation.id
+    workflow.submission_status = "READY"
+    record_audit(ctx, "tender.workflow.quotation", "tender_workflow", workflow.id,
+                 {"after": {"quotation_id": str(quotation.id), "customer_id": str(workflow.customer_id)}})
+    ctx.db.commit()
+    return _workflow_out(ctx, workflow)
+
+
+@router.post("/{tender_id}/workflow/submission")
+def update_workflow_submission(tender_id: UUID, body: WorkflowSubmissionIn,
+                               ctx: TenantContext = Depends(require("tenders:write"))):
+    _get_tender(ctx, tender_id)
+    workflow = _workflow(ctx, tender_id)
+    if workflow is None or not workflow.quotation_id:
+        raise bad_request("QUOTATION_REQUIRED", "Generate a quotation before tracking submission")
+    if body.status == "MANUALLY_SUBMITTED" and not body.external_submission_reference:
+        raise bad_request("SUBMISSION_REFERENCE_REQUIRED", "Record the external submission reference before marking submitted")
+    workflow.submission_status = body.status
+    workflow.external_submission_reference = body.external_submission_reference
+    workflow.submission_notes = body.submission_notes
+    workflow.external_submitted_at = datetime.now(timezone.utc) if body.status == "MANUALLY_SUBMITTED" else None
+    record_audit(ctx, "tender.workflow.submission", "tender_workflow", workflow.id,
+                 {"after": {"status": body.status, "reference": body.external_submission_reference}})
+    ctx.db.commit()
+    return _workflow_out(ctx, workflow)
+
+
+def _xlsx_download(filename: str, columns: list[str], rows: list[list[object]]) -> Response:
+    from openpyxl import Workbook
+    book = Workbook(); sheet = book.active; sheet.title = "SteelBid export"
+    sheet.append(columns)
+    for row in rows: sheet.append([str(value) if value is not None else "" for value in row])
+    for cell in sheet[1]: cell.font = cell.font.copy(bold=True)
+    for column in sheet.columns:
+        sheet.column_dimensions[column[0].column_letter].width = min(60, max(12, max(len(str(c.value or "")) for c in column) + 2))
+    stream = BytesIO(); book.save(stream)
+    return Response(stream.getvalue(), media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    headers={"Content-Disposition": f'attachment; filename="{filename}"'})
+
+
+@router.get("/{tender_id}/workflow/boq.xlsx")
+def export_workflow_boq(tender_id: UUID, ctx: TenantContext = Depends(require("read"))):
+    _get_tender(ctx, tender_id)
+    rows = ctx.db.scalars(select(BOQItem).where(BOQItem.tender_id == tender_id,
+        BOQItem.organization_id == ctx.org_id).order_by(BOQItem.created_at)).all()
+    return _xlsx_download(f"BOQ-{tender_id}.xlsx", ["Line", "Description", "Form", "Grade", "Quantity", "Unit", "Review", "Source page"],
+                          [[r.line_no, r.raw_description, r.form, r.grade, r.quantity, r.unit, r.review_status, r.page_ref] for r in rows])
+
+
+@router.get("/{tender_id}/workflow/bom.xlsx")
+def export_workflow_bom(tender_id: UUID, ctx: TenantContext = Depends(require("read"))):
+    _get_tender(ctx, tender_id)
+    workflow = _workflow(ctx, tender_id)
+    if workflow is None or workflow.bom_version_id is None: raise bad_request("MISSING_BOM", "Generate the tender BOM before exporting")
+    rows = ctx.db.scalars(select(BOMItem).where(BOMItem.bom_version_id == workflow.bom_version_id)).all()
+    tender = _get_tender(ctx, tender_id)
+    export_rows = []
+    for r in rows:
+        material = ctx.db.get(OrganizationMaterial, r.material_id)
+        export_rows.append([material.name if material else str(r.material_id), material.form if material else "", material.grade if material else "", r.tender_requirement_snapshot_id, r.quantity, r.unit, r.theoretical_waste_pct, r.notes])
+    return _xlsx_download(f"BOM-{tender.number}.xlsx", ["Material", "Form", "Grade", "Requirement snapshot", "Quantity", "Unit", "Wastage %", "BOQ trace"], export_rows)
+
+
+@router.get("/{tender_id}/workflow/estimate.xlsx")
+def export_workflow_estimate(tender_id: UUID, ctx: TenantContext = Depends(require("read"))):
+    _get_tender(ctx, tender_id)
+    workflow = _workflow(ctx, tender_id)
+    if workflow is None or workflow.cost_estimate_id is None: raise bad_request("MISSING_ESTIMATE", "Create the tender estimate before exporting")
+    estimate = ctx.db.scalar(select(CostEstimate).where(CostEstimate.id == workflow.cost_estimate_id,
+        CostEstimate.organization_id == ctx.org_id))
+    if estimate is None: raise not_found("Cost estimate")
+    lines = ctx.db.scalars(select(CostLine).where(CostLine.cost_estimate_id == estimate.id)).all()
+    rows = [[line.category, line.description, line.quantity, line.unit, line.unit_cost, line.amount] for line in lines]
+    rows.append(["TOTAL", "Tender estimate", "", "", "", estimate.total_cost])
+    return _xlsx_download(f"Estimate-{tender_id}.xlsx", ["Category", "Description", "Quantity", "Unit", "Unit cost", "Amount"], rows)
+
+
+@router.get("/{tender_id}/workflow/quotation.pdf")
+def export_workflow_quotation_pdf(tender_id: UUID, ctx: TenantContext = Depends(require("read"))):
+    tender = _get_tender(ctx, tender_id)
+    workflow = _workflow(ctx, tender_id)
+    if workflow is None or workflow.quotation_id is None: raise bad_request("MISSING_QUOTATION", "Generate the tender quotation before exporting")
+    from app.models.sales import Quotation, QuotationItem
+    quotation = ctx.db.scalar(select(Quotation).where(Quotation.id == workflow.quotation_id,
+        Quotation.organization_id == ctx.org_id))
+    version = ctx.db.scalar(select(QuotationVersion).where(QuotationVersion.quotation_id == workflow.quotation_id).order_by(QuotationVersion.version_no.desc()))
+    if quotation is None or version is None: raise not_found("Quotation")
+    customer = ctx.db.get(Customer, quotation.customer_id)
+    items = ctx.db.scalars(select(QuotationItem).where(QuotationItem.quotation_version_id == version.id)).all()
+    import fitz
+    document = fitz.open(); page = document.new_page(); y = 48
+    def write(text: str, size: int = 10, bold: bool = False):
+        nonlocal y, page
+        if y > 780: page = document.new_page(); y = 48
+        page.insert_text((48, y), text, fontsize=size, fontname="hebo" if bold else "helv"); y += size + 8
+    write(ctx.organization.name, 16, True); write(f"Quotation {quotation.number}", 18, True); write(f"Tender: {tender.number} — {tender.title}")
+    write(f"Customer: {customer.name if customer else 'Not recorded'}"); write("DEMONSTRATION COMMERCIAL RATES — NOT APPROVED SUPPLIER QUOTATIONS" if workflow.use_demo_commercial_rates else "Commercial rate basis: authorised inputs")
+    if tender.is_demo: write("SIMULATED TRAINING DATA — NOT AN OFFICIAL GOVERNMENT TENDER OR SUPPLIER QUOTE.", 9, True)
+    y += 8; write("Description | Quantity | Unit | Unit price | Amount", 10, True)
+    for item in items: write(f"{item.description[:42]} | {item.quantity} | {item.unit} | {item.unit_price} | {item.line_selling_price}")
+    y += 6; write(f"Total quotation amount: INR {version.total_selling_price}", 12, True)
+    payload = document.tobytes(); document.close()
+    return Response(payload, media_type="application/pdf", headers={"Content-Disposition": f'attachment; filename="Quotation-{quotation.number}.pdf"'})
+
+
+def _report_pdf(ctx: TenantContext, tender: Tender, report_name: str, lines: list[str]) -> Response:
+    """Tenant-scoped PDF renderer used by workflow reports; never returns HTML."""
+    import fitz
+    document = fitz.open(); page = document.new_page(); y = 48
+    def write(text: str, size: int = 10, bold: bool = False):
+        nonlocal page, y
+        if y > 780:
+            page = document.new_page(); y = 48
+        page.insert_text((44, y), text[:145], fontsize=size, fontname="hebo" if bold else "helv"); y += size + 8
+    write(ctx.organization.name, 16, True); write(report_name, 14, True)
+    write(f"Tender: {tender.number} — {tender.title}")
+    write(f"Generated: {datetime.now(timezone.utc).strftime('%d %b %Y %H:%M UTC')}")
+    write(f"Source classification: {tender.data_classification} / {tender.source_type}")
+    if tender.is_demo:
+        write("SIMULATED TRAINING DATA — NOT AN OFFICIAL GOVERNMENT TENDER OR SUPPLIER QUOTE.", 9, True)
+    y += 6
+    for line in lines: write(line)
+    for pno, p in enumerate(document, 1):
+        p.insert_text((44, 815), f"SteelBid AI · {report_name} · Page {pno}", fontsize=8)
+    payload = document.tobytes(); document.close()
+    slug = report_name.lower().replace(" ", "-").replace("&", "and")
+    return Response(payload, media_type="application/pdf", headers={"Content-Disposition": f'attachment; filename="{slug}-{tender.number}.pdf"'})
+
+
+@router.get("/{tender_id}/reports/analysis.pdf")
+def report_analysis(tender_id: UUID, ctx: TenantContext = Depends(require("read"))):
+    tender = _get_tender(ctx, tender_id); workflow = _workflow(ctx, tender_id)
+    boq = ctx.db.scalars(select(BOQItem).where(BOQItem.tender_id == tender_id, BOQItem.organization_id == ctx.org_id)).all()
+    lines = [f"Submission deadline: {tender.submission_deadline or 'Not recorded'}", f"BOQ review: {sum(x.review_status == 'CONFIRMED' for x in boq)}/{len(boq)} confirmed", f"BOM: {'Generated' if workflow and workflow.bom_version_id else 'Pending'}"]
+    lines += [f"{x.raw_description} | {x.grade or '—'} | {x.quantity or '—'} {x.unit or ''} | {x.review_status}" for x in boq]
+    return _report_pdf(ctx, tender, "Tender Analysis Report", lines)
+
+
+@router.get("/{tender_id}/reports/boq.pdf")
+def report_boq(tender_id: UUID, ctx: TenantContext = Depends(require("read"))):
+    tender = _get_tender(ctx, tender_id)
+    rows = ctx.db.scalars(select(BOQItem).where(BOQItem.tender_id == tender_id, BOQItem.organization_id == ctx.org_id).order_by(BOQItem.created_at)).all()
+    return _report_pdf(ctx, tender, "BOQ Report", [f"{r.line_no or '—'} | {r.raw_description} | Grade {r.grade or '—'} | {r.quantity or '—'} {r.unit or ''} | {r.review_status}" for r in rows])
+
+
+@router.get("/{tender_id}/reports/bom.pdf")
+def report_bom(tender_id: UUID, ctx: TenantContext = Depends(require("read"))):
+    tender = _get_tender(ctx, tender_id); workflow = _workflow(ctx, tender_id)
+    if not workflow or not workflow.bom_version_id: raise bad_request("MISSING_BOM", "Generate the tender BOM before exporting")
+    rows = ctx.db.scalars(select(BOMItem).where(BOMItem.bom_version_id == workflow.bom_version_id)).all()
+    lines = []
+    for r in rows:
+        material = ctx.db.get(OrganizationMaterial, r.material_id)
+        lines.append(f"{material.name if material else r.material_id} | {material.form if material else 'Unknown'} | Grade {material.grade if material else 'Unknown'} | {r.quantity} {r.unit} | source BOQ {r.tender_requirement_snapshot_id}")
+    return _report_pdf(ctx, tender, "BOM Report", lines)
+
+
+@router.get("/{tender_id}/reports/inventory.pdf")
+def report_inventory(tender_id: UUID, ctx: TenantContext = Depends(require("read"))):
+    tender = _get_tender(ctx, tender_id); workflow = _workflow(ctx, tender_id)
+    if not workflow or not workflow.bom_version_id: raise bad_request("MISSING_BOM", "Generate the tender BOM before exporting")
+    rows = ctx.db.scalars(select(BOMItem).where(BOMItem.bom_version_id == workflow.bom_version_id)).all(); lines=[]
+    for r in rows:
+        available = ctx.db.scalar(select(func.coalesce(func.sum(StockLot.on_hand_qty - StockLot.reserved_qty), 0)).where(StockLot.organization_id == ctx.org_id, StockLot.material_id == r.material_id, StockLot.quality_status == "OK")) or ZERO
+        covered=min(Decimal(str(r.quantity)), Decimal(str(available))); material = ctx.db.get(OrganizationMaterial, r.material_id)
+        lines.append(f"{material.name if material else r.material_id} | Grade {material.grade if material else 'Unknown'} | required {r.quantity} {r.unit} | eligible {available} {r.unit} | shortage {Decimal(str(r.quantity))-covered} {r.unit}")
+    return _report_pdf(ctx, tender, "Inventory and Shortage Report", lines)
+
+
+@router.get("/{tender_id}/reports/estimate.pdf")
+def report_estimate(tender_id: UUID, ctx: TenantContext = Depends(require("read"))):
+    tender = _get_tender(ctx, tender_id); workflow = _workflow(ctx, tender_id)
+    if not workflow or not workflow.cost_estimate_id: raise bad_request("MISSING_ESTIMATE", "Create the tender estimate before exporting")
+    estimate = ctx.db.scalar(select(CostEstimate).where(CostEstimate.id == workflow.cost_estimate_id, CostEstimate.organization_id == ctx.org_id))
+    if estimate is None: raise not_found("Cost estimate")
+    rows = ctx.db.scalars(select(CostLine).where(CostLine.cost_estimate_id == estimate.id)).all()
+    lines = [f"{row.category} | {row.description} | {row.quantity or ''} {row.unit or ''} | INR {row.amount}" for row in rows]
+    lines.append(f"TOTAL ESTIMATED COST | INR {estimate.total_cost}")
+    return _report_pdf(ctx, tender, "Detailed Cost Estimate", lines)
+
+
+@router.get("/{tender_id}/reports/supplier-comparison.pdf")
+def report_supplier_comparison(tender_id: UUID, ctx: TenantContext = Depends(require("read"))):
+    tender = _get_tender(ctx, tender_id)
+    snapshots = ctx.db.scalars(select(TenderRequirementSnapshot).where(
+        TenderRequirementSnapshot.tender_id == tender_id, TenderRequirementSnapshot.organization_id == ctx.org_id)).all()
+    # Approved requirement snapshots are the tender provenance boundary: do
+    # not infer or include any offer for a material outside this tender.
+    material_ids = list({x.material_id for x in snapshots})
+    quotes = ctx.db.scalars(select(SupplierQuote).where(SupplierQuote.organization_id == ctx.org_id,
+        SupplierQuote.material_id.in_(material_ids))).all() if material_ids else []
+    requirements = {x.material_id: x for x in snapshots}
+    lines = ["Comparison basis: persisted supplier offers matching approved tender requirement materials.",
+             "Data provenance: supplier_quotes, rfqs, suppliers and tender_requirement_snapshots (tenant scoped)."]
+    if not quotes:
+        lines += ["Comparison status: NO OFFERS RECORDED.",
+                  "No persisted supplier offers are available for this tender's approved requirements; no quotation has been inferred."]
+    for quote in quotes:
+        supplier = ctx.db.get(Supplier, quote.supplier_id); rfq = ctx.db.get(RFQ, quote.rfq_id) if quote.rfq_id else None
+        material = ctx.db.get(OrganizationMaterial, quote.material_id)
+        total = Decimal(str(quote.quantity)) * Decimal(str(quote.unit_price))
+        requirement = requirements.get(quote.material_id)
+        delivery = f"lead {quote.lead_time_days} days; payment {quote.payment_terms_days} days"
+        lines.append(f"Supplier: {supplier.name if supplier else 'Supplier unavailable'} | RFQ: {rfq.number if rfq else 'Not linked'} | comparison status: {quote.status}")
+        lines.append(f"Material: {material.name if material else quote.material_id} | form {material.form if material else 'Unknown'} | grade {material.grade if material else 'Unknown'} | tender requirement {requirement.quantity if requirement else 'Unknown'} {requirement.unit if requirement else ''}")
+        lines.append(f"Offer: {quote.quantity} {quote.unit} at {quote.currency} {quote.unit_price}/{quote.unit} | total offer value {quote.currency} {total} | delivery terms: {delivery} | valid until {quote.valid_until or 'Not recorded'}")
+        lines.append("Data provenance: persisted training supplier offer." if tender.is_demo else "Data provenance: persisted supplier offer.")
+    return _report_pdf(ctx, tender, "Supplier Comparison Report", lines)
 
 
 @router.get("/{tender_id}/requirement-snapshots/{snapshot_id}/supplier-offers")
@@ -164,7 +592,8 @@ def _get_tender(ctx: TenantContext, tender_id: UUID) -> Tender:
 @router.get("", response_model=Page[TenderOut])
 def list_tenders(ctx: TenantContext = Depends(require("read")),
                  params: PageParams = Depends(), search: str | None = Query(None),
-                 status: str | None = Query(None), project_type: str | None = Query(None)):
+                 status: str | None = Query(None), project_type: str | None = Query(None),
+                 data_classification: str | None = Query(None)):
     stmt = select(Tender).where(Tender.organization_id == ctx.org_id)
     if search:
         like = f"%{search}%"
@@ -173,6 +602,8 @@ def list_tenders(ctx: TenantContext = Depends(require("read")),
         stmt = stmt.where(Tender.status == status)
     if project_type:
         stmt = stmt.where(Tender.project_type == project_type)
+    if data_classification:
+        stmt = stmt.where(Tender.data_classification == data_classification)
     stmt = stmt.order_by(Tender.submission_deadline.asc().nullslast(), Tender.created_at.desc())
     rows, total = paginate(ctx.db, stmt, params)
     return Page(items=[_t_out(ctx, t) for t in rows], total=total,

@@ -3,7 +3,7 @@
 export function fmtMoney(value?: string | number | null, currency = "₹"): string {
   if (value === null || value === undefined || value === "") return "—";
   const n = Number(value);
-  if (Number.isNaN(n)) return String(value);
+  if (Number.isNaN(n)) return "—";
   if (Math.abs(n) >= 1e7) return `${currency}${(n / 1e7).toFixed(2)}Cr`;
   if (Math.abs(n) >= 1e5) return `${currency}${(n / 1e5).toFixed(2)}L`;
   return `${currency}${n.toLocaleString("en-IN", { maximumFractionDigits: 0 })}`;

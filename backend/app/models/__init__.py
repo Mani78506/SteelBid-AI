@@ -5,7 +5,7 @@ from app.models.crm import Customer, CustomerContact, CustomerInquiry, InquiryIt
 from app.models.sales import Quotation, QuotationItem, QuotationVersion, SalesOrder, SalesOrderItem  # noqa: F401
 from app.models.inventory import (InventoryMovement, Reservation, StockLot,  # noqa: F401
                                   StockTransfer, StorageLocation, Warehouse)
-from app.models.market import MarketImportBatch, MarketImportStagedRow, MarketIngestionRun, MarketPriceAlertEvent, MarketPriceAlertRule, MarketSource, PriceObservation, PriceScenario, PriceSource  # noqa: F401
+from app.models.market import GlobalCommodityBenchmark, MarketImportBatch, MarketImportStagedRow, MarketIngestionRun, MarketPriceAlertEvent, MarketPriceAlertRule, MarketSource, MarketSourceDocument, MarketSourceExtraction, MarketSourceProviderConfig, MarketSourceRefreshState, PriceObservation, PriceScenario, PriceSource  # noqa: F401
 from app.models.procurement import (GoodsReceipt, PurchaseOrder, PurchaseOrderItem,  # noqa: F401
                                     PurchaseRequest, PurchaseRequestItem, RFQ, Supplier,
                                     SupplierQuote)
@@ -13,7 +13,8 @@ from app.models.fabrication import (BOMItem, BOMVersion, MaterialAllocation,  # 
                                     ProductionOperation, QualityInspection, Routing,
                                     ScrapRecord, WorkOrder)
 from app.models.projects import (BOQItem, ExtractionEvidence, Project,  # noqa: F401
-                                 ProjectRequirement, Tender, TenderDocument)
+                                 ProjectRequirement, Tender, TenderDocument,
+                                 TenderRequirementSnapshot, TenderSupplierSelection, TenderWorkflow)
 from app.models.ops import (AIJob, Approval, AuditEvent, CostEstimate, CostLine,  # noqa: F401
                             Dispatch, DispatchItem, Invoice, Notification, Payment,
                             Shipment)

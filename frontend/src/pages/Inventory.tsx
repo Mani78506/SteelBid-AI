@@ -27,6 +27,7 @@ export default function Inventory() {
   const [warehouseId, setWarehouseId] = React.useState("");
   const [quality, setQuality] = React.useState("");
   const [materialId, setMaterialId] = React.useState("");
+  const [stockScope, setStockScope] = React.useState<"ALL" | "OPERATIONAL" | "TRAINING">("ALL");
   const [receiptOpen, setReceiptOpen] = React.useState(false);
   const [issueOpen, setIssueOpen] = React.useState(false);
   const [issueLot, setIssueLot] = React.useState<StockLot | null>(null);
@@ -68,6 +69,7 @@ export default function Inventory() {
 
   const lotCols: ColumnDef<StockLot, unknown>[] = [
     { accessorKey: "lot_number", header: "Lot", cell: (c) => <span className="font-medium">{c.getValue() as string}</span> },
+    { id: "classification", header: "Class", cell: (c) => c.row.original.lot_number.startsWith("TRAINING-") ? <span className="rounded-full bg-amber-100 px-2 py-1 text-[10px] font-bold text-amber-800">TRAINING STOCK</span> : <span className="text-xs text-slate-500">Operational</span> },
     { accessorKey: "material_name", header: "Material" },
     { accessorKey: "warehouse_name", header: "Warehouse" },
     { accessorKey: "heat_number", header: "Heat #" },
@@ -83,6 +85,8 @@ export default function Inventory() {
         </Button>),
     },
   ];
+  const visibleLots = (lots.data?.items ?? []).filter((lot) => stockScope === "ALL" || (stockScope === "TRAINING" ? lot.lot_number.startsWith("TRAINING-") : !lot.lot_number.startsWith("TRAINING-")));
+  const displayedValue = visibleLots.reduce((total, lot) => total + Number(lot.on_hand_qty) * Number(lot.unit_cost ?? 0), 0);
   const mvCols: ColumnDef<Movement, unknown>[] = [
     { accessorKey: "created_at", header: "When", cell: (c) => <span className="text-xs">{fmtDateTime(c.getValue() as string)}</span> },
     { accessorKey: "movement_type", header: "Type", cell: (c) => <Badge value={c.getValue() as string} /> },
@@ -97,7 +101,7 @@ export default function Inventory() {
         <div>
           <h1 className="text-lg font-bold">Inventory</h1>
           <p className="text-xs text-muted-foreground">
-            Valuation {valuation.data ? <b className="text-foreground">{fmtMoney(valuation.data.total_value)}</b> : "…"} · {lots.data?.total ?? "—"} stock lots
+            {stockScope === "TRAINING" ? "Training stock" : stockScope === "OPERATIONAL" ? "Operational stock" : "All stock"} valuation <b className="text-foreground">{fmtMoney(displayedValue)}</b> · {visibleLots.length} stock lots
           </p>
         </div>
         <div className="flex gap-2">
@@ -121,6 +125,7 @@ export default function Inventory() {
           <Select value={quality} onChange={(e) => setQuality(e.target.value)}>
             <option value="">All</option><option>OK</option><option>QUARANTINED</option><option>REJECTED</option>
           </Select></div>
+        <div className="w-44"><Label>Stock class</Label><Select value={stockScope} onChange={(e) => setStockScope(e.target.value as typeof stockScope)}><option value="ALL">All stock</option><option value="OPERATIONAL">Operational only</option><option value="TRAINING">Training only</option></Select></div>
         <div className="ml-auto flex rounded-md border border-border text-xs">
           {(["lots", "movements"] as const).map((t) => (
             <button key={t} onClick={() => setTab(t)}
@@ -133,8 +138,8 @@ export default function Inventory() {
 
       {tab === "lots"
         ? <Card>{lots.error ? <ErrorState error={lots.error} onRetry={() => lots.refetch()} />
-          : <DataTable columns={lotCols} data={lots.data?.items} loading={lots.isLoading} dense
-              emptyTitle="No stock lots" emptyHint="Post a receipt to add stock." />}</Card>
+          : visibleLots.length > 0 && visibleLots.every((lot) => lot.lot_number.startsWith("TRAINING-")) ? <CardContent className="p-4"><div className="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3"><div><p className="text-sm font-bold text-amber-950">Simulated training inventory</p><p className="text-xs text-amber-800">{visibleLots.length} receipt-backed lots in the dedicated training warehouse. Not operational ATP.</p></div><b className="text-lg text-amber-950">{fmtMoney(displayedValue)}</b></div><div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">{visibleLots.map(lot=><article key={lot.id} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm"><div className="flex items-start justify-between gap-3"><span className="rounded-full bg-amber-100 px-2 py-1 text-[10px] font-bold text-amber-800">TRAINING STOCK</span><Badge value={lot.quality_status} /></div><h3 className="mt-3 font-semibold text-slate-950">{lot.material_name?.replace(/^\[TRAINING\]\s*/, "")}</h3><p className="mt-1 text-xs text-slate-500">{lot.warehouse_name?.replace(/^\[TRAINING\]\s*/, "")}</p><div className="mt-4 grid grid-cols-3 gap-2 border-y border-slate-100 py-3 text-xs"><span>On hand<b className="mt-1 block text-sm text-slate-900">{fmtQty(lot.on_hand_qty,lot.unit)}</b></span><span>Reserved<b className="mt-1 block text-sm text-slate-900">{fmtQty(lot.reserved_qty,lot.unit)}</b></span><span>Available<b className="mt-1 block text-sm text-emerald-700">{fmtQty(lot.available_qty,lot.unit)}</b></span></div><div className="mt-3 flex items-center justify-between text-xs text-slate-500"><span>Receipt: {lot.lot_number}</span><b className="text-slate-900">{fmtMoney(lot.unit_cost)}/{lot.unit}</b></div></article>)}</div></CardContent> : <DataTable columns={lotCols} data={visibleLots} loading={lots.isLoading} dense
+              emptyTitle={stockScope === "TRAINING" ? "No training stock lots" : "No stock lots"} emptyHint="Adjust the filters or post a receipt." />}</Card>
         : <Card>{movements.error ? <ErrorState error={movements.error} />
           : <DataTable columns={mvCols} data={movements.data?.items} loading={movements.isLoading} dense
               emptyTitle="No movements yet" />}</Card>}

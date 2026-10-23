@@ -1,5 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import MarketIntelligencePanel from "@/components/dashboard/MarketIntelligencePanel";
+import GlobalCommodityBenchmarks from "@/components/dashboard/GlobalCommodityBenchmarks";
+import DataTransparency from "@/components/dashboard/DataTransparency";
 import { ErrorState, Skeleton } from "@/components/ui";
 import { get } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
@@ -24,7 +26,7 @@ export default function Market() {
 
   return (
     <div className="mx-auto max-w-[1450px] pb-4">
-      <MarketIntelligencePanel key={activeOrg?.id} series={overview.data.market_trends} />
+      <div className="space-y-4"><MarketIntelligencePanel key={activeOrg?.id} series={overview.data.market_trends} /><DataTransparency /><GlobalCommodityBenchmarks /></div>
     </div>
   );
 }

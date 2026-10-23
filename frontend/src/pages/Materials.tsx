@@ -1,125 +1,47 @@
 import * as React from "react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSearchParams } from "react-router";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { Plus, Search, Package } from "lucide-react";
+import { Bar, BarChart, Cell, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { Box, Eye, Grid2X2, List, Package, Plus, Search, SlidersHorizontal } from "lucide-react";
+import type { ColumnDef } from "@tanstack/react-table";
 import { get, post, type Page } from "@/lib/api";
-import type { Material, Availability } from "@/lib/types";
-import { Card, Button, Input, Select, Label, Badge, Modal, ErrorState } from "@/components/ui";
+import type { Availability, Material } from "@/lib/types";
+import { Badge, Button, Card, CompactChartCard, DetailDrawer, ErrorState, Input, Label, MetricCard, Modal, Select } from "@/components/ui";
 import { DataTable } from "@/components/DataTable";
 import { useToast } from "@/components/Toast";
 import { fmtQty } from "@/lib/format";
-import type { ColumnDef } from "@tanstack/react-table";
 
-const schema = z.object({
-  sku: z.string().min(2), name: z.string().min(3),
-  form: z.string().min(1), grade: z.string().min(1, "Grade is required"), standard: z.string().optional(),
-  base_unit: z.string().default("MT"), density: z.string().optional(),
-});
+const schema = z.object({ sku: z.string().min(2), name: z.string().min(3), form: z.string().min(1), grade: z.string().min(1, "Grade is required"), standard: z.string().optional(), base_unit: z.string().default("MT"), density: z.string().optional() });
 type FormValues = z.infer<typeof schema>;
+const colors = ["#1769aa", "#3b82c4", "#55a1dc", "#7dc0eb", "#a8d7f2", "#cbddea"];
+
+function countBy(items: Material[], key: "form" | "grade") {
+  return Object.entries(items.reduce<Record<string, number>>((all, item) => { const value = item[key] || "Unspecified"; all[value] = (all[value] ?? 0) + 1; return all; }, {})).map(([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value).slice(0, 7);
+}
 
 export default function Materials() {
-  const qc = useQueryClient();
-  const toast = useToast();
-  const [params] = useSearchParams();
-  const [search, setSearch] = React.useState(params.get("search") ?? "");
-  const [createOpen, setCreateOpen] = React.useState(false);
-  const [expanded, setExpanded] = React.useState<string | null>(null);
-
-  const list = useQuery({
-    queryKey: ["materials", search],
-    queryFn: () => get<Page<Material>>(`/v1/materials?search=${encodeURIComponent(search)}`),
-  });
-
-  const avail = useQuery({
-    queryKey: ["availability", expanded],
-    queryFn: () => get<Availability[]>(`/v1/materials/availability?material_id=${expanded}`),
-    enabled: !!expanded,
-  });
-
+  const queryClient = useQueryClient(); const toast = useToast(); const [params] = useSearchParams();
+  const [search, setSearch] = React.useState(params.get("search") ?? ""); const [view, setView] = React.useState<"grid" | "table">("grid"); const [createOpen, setCreateOpen] = React.useState(false); const [selected, setSelected] = React.useState<Material | null>(null);
+  const list = useQuery({ queryKey: ["materials", search], queryFn: () => get<Page<Material>>(`/v1/materials?search=${encodeURIComponent(search)}`) });
+  const availability = useQuery({ queryKey: ["availability", selected?.id], enabled: !!selected, queryFn: () => get<Availability[]>(`/v1/materials/availability?material_id=${selected!.id}`) });
   const form = useForm<FormValues>({ resolver: zodResolver(schema), defaultValues: { form: "BEAM", base_unit: "MT" } });
-  const createMut = useMutation({
-    mutationFn: (v: FormValues) => post("/v1/materials", { ...v, density: v.density || undefined }),
-    onSuccess: () => { toast.push("success", "Material created"); setCreateOpen(false); form.reset(); qc.invalidateQueries({ queryKey: ["materials"] }); },
-    onError: (e) => toast.push("error", e instanceof Error ? e.message : "Create failed"),
-  });
-
+  const createMut = useMutation({ mutationFn: (values: FormValues) => post("/v1/materials", { ...values, density: values.density || undefined }), onSuccess: () => { toast.push("success", "Material created"); setCreateOpen(false); form.reset(); queryClient.invalidateQueries({ queryKey: ["materials"] }); }, onError: (error) => toast.push("error", error instanceof Error ? error.message : "Create failed") });
+  const materials = list.data?.items ?? []; const formData = countBy(materials, "form"); const gradeData = countBy(materials, "grade"); const activeCount = materials.filter((item) => item.is_active).length;
   const columns: ColumnDef<Material, unknown>[] = [
-    { accessorKey: "sku", header: "SKU", cell: (c) => <span className="font-medium text-primary">{c.getValue() as string}</span> },
-    { accessorKey: "name", header: "Material" },
-    { accessorKey: "form", header: "Form", cell: (c) => <Badge value={c.getValue() as string} /> },
-    { accessorKey: "grade", header: "Grade" },
-    { accessorKey: "standard", header: "Std" },
-    { accessorKey: "base_unit", header: "Unit" },
-    { id: "status", header: "Status", cell: (c) => <Badge value={c.row.original.is_active ? "ACTIVE" : "CANCELLED"} /> },
+    { accessorKey: "sku", header: "SKU", cell: (cell) => <span className="font-medium text-primary">{cell.getValue() as string}</span> },
+    { accessorKey: "name", header: "Material" }, { accessorKey: "form", header: "Form", cell: (cell) => <Badge value={cell.getValue() as string} /> }, { accessorKey: "grade", header: "Grade", cell: (cell) => cell.getValue() || "—" }, { accessorKey: "standard", header: "Standard", cell: (cell) => cell.getValue() || "—" }, { accessorKey: "base_unit", header: "Unit" }, { id: "status", header: "Status", cell: (cell) => <Badge value={cell.row.original.is_active ? "ACTIVE" : "CANCELLED"} /> },
   ];
-
-  return (
-    <div className="mx-auto max-w-[1400px] space-y-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div><h1 className="text-lg font-bold">Material Master</h1>
-          <p className="text-xs text-muted-foreground">{list.data?.total ?? "—"} materials · organization-scoped catalog</p></div>
-        <Button size="sm" onClick={() => setCreateOpen(true)}><Plus className="h-3.5 w-3.5" /> New material</Button>
-      </div>
-
-      <div className="relative max-w-sm">
-        <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-        <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search SKU, name, grade…" className="pl-8" />
-      </div>
-
-      {list.error ? <ErrorState error={list.error} onRetry={() => list.refetch()} /> : (
-        <Card>
-          <DataTable columns={columns} data={list.data?.items} loading={list.isLoading}
-            onRowClick={(m) => setExpanded(expanded === m.id ? null : m.id)}
-            emptyTitle="No materials found" emptyHint="Adjust search or create a material." />
-          {expanded && (
-            <div className="border-t border-border bg-muted/30 px-4 py-3">
-              {avail.isLoading ? <p className="text-xs text-muted-foreground">Loading availability…</p> : (
-                <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
-                  {avail.data?.[0] && [
-                    ["On hand", avail.data[0].on_hand], ["Reserved", avail.data[0].reserved],
-                    ["Quality held", avail.data[0].quality_held], ["Available", avail.data[0].available],
-                  ].map(([label, v]) => (
-                    <div key={label} className="rounded-md border border-border bg-card px-3 py-2">
-                      <p className="text-[10px] uppercase tracking-wide text-muted-foreground">{label}</p>
-                      <p className="text-sm font-bold tabular-nums">{fmtQty(v as string)}</p>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
-        </Card>
-      )}
-
-      <Modal open={createOpen} onClose={() => setCreateOpen(false)} title="New material">
-        <form onSubmit={form.handleSubmit((v) => createMut.mutate(v))} className="space-y-3">
-          <div className="grid grid-cols-2 gap-3">
-            <div><Label>SKU</Label><Input {...form.register("sku")} placeholder="APX-PLATE-10-E250" />
-              {form.formState.errors.sku && <p className="mt-1 text-[11px] text-red-600">{form.formState.errors.sku.message}</p>}</div>
-            <div><Label>Base unit</Label>
-              <Select {...form.register("base_unit")}><option>MT</option><option>KG</option><option>NOS</option><option>MTR</option></Select></div>
-          </div>
-          <div><Label>Name</Label><Input {...form.register("name")} placeholder="Plate 10mm E250" />
-            {form.formState.errors.name && <p className="mt-1 text-[11px] text-red-600">{form.formState.errors.name.message}</p>}</div>
-          <div className="grid grid-cols-3 gap-3">
-            <div><Label>Form</Label>
-              <Select {...form.register("form")}>
-                {["BEAM", "CHANNEL", "ANGLE", "PLATE", "SHEET", "COIL", "BAR", "PIPE", "TMT", "FASTENER", "OTHER"].map((f) => <option key={f}>{f}</option>)}
-              </Select></div>
-            <div><Label>Grade</Label><Input {...form.register("grade")} placeholder="E250" />
-              {form.formState.errors.grade && <p className="mt-1 text-[11px] text-red-600">{form.formState.errors.grade.message}</p>}</div>
-            <div><Label>Standard</Label><Input {...form.register("standard")} placeholder="IS 2062" /></div>
-          </div>
-          <div><Label>Density kg/m³ (optional)</Label><Input {...form.register("density")} placeholder="7850" /></div>
-          <div className="flex justify-end gap-2 pt-2">
-            <Button type="button" variant="outline" onClick={() => setCreateOpen(false)}>Cancel</Button>
-            <Button type="submit" loading={createMut.isPending}>Create</Button>
-          </div>
-        </form>
-      </Modal>
-    </div>
-  );
+  return <div className="mx-auto max-w-[1500px] space-y-5">
+    <header className="flex flex-wrap items-end justify-between gap-4"><div><p className="text-xs font-medium uppercase tracking-[0.14em] text-primary">Materials & stock</p><h1 className="mt-1 text-2xl font-semibold tracking-tight">Material Master</h1><p className="mt-1 text-sm text-muted-foreground">Manage the organization-scoped steel material catalogue.</p></div><div className="flex items-center gap-2"><div className="flex rounded-md border border-border bg-card p-1" role="group" aria-label="Material view"><Button type="button" size="sm" variant={view === "grid" ? "default" : "ghost"} onClick={() => setView("grid")} aria-label="Grid view"><Grid2X2 className="h-4 w-4" /><span className="hidden sm:inline">Grid</span></Button><Button type="button" size="sm" variant={view === "table" ? "default" : "ghost"} onClick={() => setView("table")} aria-label="Table view"><List className="h-4 w-4" /><span className="hidden sm:inline">Table</span></Button></div><Button size="sm" onClick={() => setCreateOpen(true)}><Plus className="h-4 w-4" />Add material</Button></div></header>
+    <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4"><MetricCard label="Total materials" value={list.data?.total ?? "—"} hint="Catalog records" icon={<Package className="h-5 w-5" />} /><MetricCard label="Active materials" value={list.data ? activeCount : "—"} hint="Currently enabled" icon={<Eye className="h-5 w-5" />} /><MetricCard label="Material forms" value={list.data ? formData.length : "—"} hint="In this result set" icon={<Box className="h-5 w-5" />} /><MetricCard label="Grades / specifications" value={list.data ? gradeData.filter((item) => item.name !== "Unspecified").length : "—"} hint="Distinct grade values" icon={<SlidersHorizontal className="h-5 w-5" />} /></section>
+    <section className="grid gap-4 xl:grid-cols-3"><CompactChartCard title="Materials by form" subtitle="Actual catalog records"><div className="h-[220px]">{formData.length ? <ResponsiveContainer width="100%" height="100%"><BarChart data={formData} layout="vertical" margin={{ top: 2, right: 8, left: 2, bottom: 2 }}><XAxis type="number" allowDecimals={false} tick={{ fontSize: 11 }} /><YAxis dataKey="name" type="category" width={76} tick={{ fontSize: 11 }} /><Tooltip formatter={(value) => [`${value} materials`, "Count"]} cursor={{ fill: "#f1f6fb" }} /><Bar dataKey="value" radius={[0, 4, 4, 0]} fill="#1769aa" /></BarChart></ResponsiveContainer> : <div className="grid h-full place-items-center text-sm text-muted-foreground">No catalog records to chart.</div>}</div></CompactChartCard><CompactChartCard title="Materials by grade" subtitle="Actual catalog records"><div className="h-[220px]">{gradeData.length ? <ResponsiveContainer width="100%" height="100%"><PieChart><Pie data={gradeData} dataKey="value" nameKey="name" innerRadius={48} outerRadius={78} paddingAngle={2}>{gradeData.map((entry, index) => <Cell key={entry.name} fill={colors[index % colors.length]} />)}</Pie><Tooltip formatter={(value) => [`${value} materials`, "Count"]} /><text x="50%" y="48%" textAnchor="middle" dominantBaseline="middle" className="fill-slate-900 text-lg font-semibold">{materials.length}</text><text x="50%" y="60%" textAnchor="middle" className="fill-slate-500 text-[10px]">materials</text></PieChart></ResponsiveContainer> : <div className="grid h-full place-items-center text-sm text-muted-foreground">No grade records to chart.</div>}</div></CompactChartCard><CompactChartCard title="Inventory availability" subtitle="Live stock is kept separate from catalog status"><div className="flex h-[220px] flex-col items-center justify-center text-center"><WarehouseIcon /><p className="mt-3 text-sm font-medium">Select a material to inspect inventory</p><p className="mt-1 max-w-xs text-xs text-muted-foreground">Availability appears only from the authorized inventory endpoint; catalog status is not treated as stock.</p></div></CompactChartCard></section>
+    <section className="space-y-3"><div className="flex flex-wrap items-center justify-between gap-3"><div className="relative w-full max-w-md"><Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" /><Input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search SKU, material, form or grade…" className="pl-9" /></div><p className="text-xs text-muted-foreground">{list.data?.total ?? 0} matching materials</p></div>{list.error ? <ErrorState error={list.error} onRetry={() => list.refetch()} /> : view === "grid" ? <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">{list.isLoading ? Array.from({ length: 6 }).map((_, index) => <Card key={index} className="h-44 animate-pulse bg-muted" />) : materials.length ? materials.map((material) => <button key={material.id} onClick={() => setSelected(material)} className="group rounded-lg border border-border bg-card p-4 text-left shadow-card transition-all hover:-translate-y-0.5 hover:border-primary-100 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"><div className="flex items-start justify-between gap-3"><div className="flex min-w-0 gap-3"><div className="rounded-lg bg-primary-50 p-2.5 text-primary"><Package className="h-5 w-5" /></div><div className="min-w-0"><p className="truncate text-sm font-semibold">{material.name}</p><p className="mt-0.5 truncate text-xs text-muted-foreground">{material.sku}</p></div></div><Badge value={material.is_active ? "ACTIVE" : "CANCELLED"} /></div><dl className="mt-5 grid grid-cols-3 gap-3 text-xs"><div><dt className="text-muted-foreground">Form</dt><dd className="mt-1 font-medium">{material.form}</dd></div><div><dt className="text-muted-foreground">Grade</dt><dd className="mt-1 font-medium">{material.grade || "—"}</dd></div><div><dt className="text-muted-foreground">Unit</dt><dd className="mt-1 font-medium">{material.base_unit}</dd></div></dl><div className="mt-4 flex items-center justify-between border-t border-border pt-3 text-xs"><span className="text-muted-foreground">{material.standard || "No standard recorded"}</span><span className="font-medium text-primary">View details</span></div></button>) : <Card className="col-span-full p-6 text-center text-sm text-muted-foreground">No materials found. Adjust the search or add a material.</Card>}</div> : <Card><DataTable columns={columns} data={list.data?.items} loading={list.isLoading} dense onRowClick={setSelected} emptyTitle="No materials found" emptyHint="Adjust search or create a material." /></Card>}</section>
+    <DetailDrawer open={!!selected} onClose={() => setSelected(null)} title="Material details">{selected && <div className="space-y-5"><div><p className="text-lg font-semibold">{selected.name}</p><p className="mt-1 text-sm text-muted-foreground">{selected.sku}</p><div className="mt-3"><Badge value={selected.is_active ? "ACTIVE" : "CANCELLED"} /></div></div><dl className="grid grid-cols-2 gap-3 rounded-lg border border-border bg-muted/30 p-4 text-sm"><div><dt className="text-xs text-muted-foreground">Form</dt><dd className="mt-1 font-medium">{selected.form}</dd></div><div><dt className="text-xs text-muted-foreground">Grade</dt><dd className="mt-1 font-medium">{selected.grade || "—"}</dd></div><div><dt className="text-xs text-muted-foreground">Standard</dt><dd className="mt-1 font-medium">{selected.standard || "—"}</dd></div><div><dt className="text-xs text-muted-foreground">Base unit</dt><dd className="mt-1 font-medium">{selected.base_unit}</dd></div></dl><div><p className="text-sm font-semibold">Inventory summary</p>{availability.isLoading ? <p className="mt-2 text-sm text-muted-foreground">Loading authorized inventory availability…</p> : availability.data?.[0] ? <div className="mt-3 grid grid-cols-2 gap-2">{[["On hand", availability.data[0].on_hand], ["Reserved", availability.data[0].reserved], ["Available", availability.data[0].available], ["Quality held", availability.data[0].quality_held]].map(([label, quantity]) => <div key={label} className="rounded-md border border-border p-3"><p className="text-[11px] text-muted-foreground">{label}</p><p className="mt-1 font-semibold tabular-nums">{fmtQty(quantity)}</p></div>)}</div> : <p className="mt-2 text-sm text-muted-foreground">No authorized inventory quantity is available for this material.</p>}</div><Button variant="outline" className="w-full" onClick={() => setSelected(null)}>Close details</Button></div>}</DetailDrawer>
+    <Modal open={createOpen} onClose={() => setCreateOpen(false)} title="New material"><form onSubmit={form.handleSubmit((values) => createMut.mutate(values))} className="space-y-3"><div className="grid grid-cols-2 gap-3"><div><Label>SKU</Label><Input {...form.register("sku")} placeholder="APX-PLATE-10-E250" />{form.formState.errors.sku && <p className="mt-1 text-[11px] text-red-600">{form.formState.errors.sku.message}</p>}</div><div><Label>Base unit</Label><Select {...form.register("base_unit")}><option>MT</option><option>KG</option><option>NOS</option><option>MTR</option></Select></div></div><div><Label>Name</Label><Input {...form.register("name")} placeholder="Plate 10mm E250" />{form.formState.errors.name && <p className="mt-1 text-[11px] text-red-600">{form.formState.errors.name.message}</p>}</div><div className="grid grid-cols-3 gap-3"><div><Label>Form</Label><Select {...form.register("form")}>{["BEAM", "CHANNEL", "ANGLE", "PLATE", "SHEET", "COIL", "BAR", "PIPE", "TMT", "FASTENER", "OTHER"].map((item) => <option key={item}>{item}</option>)}</Select></div><div><Label>Grade</Label><Input {...form.register("grade")} placeholder="E250" /></div><div><Label>Standard</Label><Input {...form.register("standard")} placeholder="IS 2062" /></div></div><div><Label>Density kg/m³ (optional)</Label><Input {...form.register("density")} placeholder="7850" /></div><div className="flex justify-end gap-2 pt-2"><Button type="button" variant="outline" onClick={() => setCreateOpen(false)}>Cancel</Button><Button type="submit" loading={createMut.isPending}>Create</Button></div></form></Modal>
+  </div>;
 }
+
+function WarehouseIcon() { return <div className="rounded-full bg-muted p-3 text-muted-foreground"><Box className="h-6 w-6" /></div>; }

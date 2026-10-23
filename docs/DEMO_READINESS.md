@@ -1,6 +1,6 @@
 # SteelBid AI — Customer demo readiness
 
-Audit date: 21 October 2026. Scope: isolated `[DEMO] SteelBid Market Showcase` only. No production data was changed or deployed.
+Audit date: 21 October 2026. Scope: isolated `[DEMO] JAYRAJ STEEL PRIVATE LIMITED` presentation workspace only. No production data was changed or deployed.
 
 ## Final polish update — 21 October 2026
 
@@ -9,7 +9,7 @@ The four customer-facing gaps identified in this report are now resolved and ver
 - **Supplier comparison:** Tender detail opens an in-application comparison for each persisted requirement snapshot. It shows supplier, quoted price, freight/tax where recorded, landed unit price, derived total landed cost, quantity, validity, compatibility, and the persisted selected supplier. Missing fields remain blank rather than being invented.
 - **Tender costing:** Tender detail now shows the linked persisted draft estimate, its recorded material/fabrication/freight/overhead components, total estimated cost, and an explicit draft-only disclosure. It does not present a quotation as approved.
 - **Notifications:** The header bell now displays tenant-scoped persisted notifications, unread count, timestamp, read state, empty/loading states, and links to the related record.
-- **Safe alert demo:** Only `[DEMO] SteelBid Market Showcase` users with market-write permission see **Run simulated alert demo**. It creates one deterministic synthetic observation through the ingestion pipeline per user, evaluates that user's threshold alert, persists the linked notification, and is idempotent on repeat. It cannot be called for customer organizations and never creates a genuine market observation.
+- **Safe alert demo:** Only `[DEMO] JAYRAJ STEEL PRIVATE LIMITED` users with market-write permission see **Run simulated alert demo**. It creates one deterministic synthetic observation through the ingestion pipeline per user, evaluates that user's threshold alert, persists the linked notification, and is idempotent on repeat. It cannot be called for customer organizations and never creates a genuine market observation.
 
 Final verification results:
 
@@ -60,7 +60,7 @@ Additional screenshots:
 
 1. Start the existing backend and frontend, then open `http://127.0.0.1:5173`.
 2. Sign in using the existing demo login procedure.
-3. Use the organization switcher and choose `[DEMO] SteelBid Market Showcase`.
+3. Use the organization switcher and choose `[DEMO] JAYRAJ STEEL PRIVATE LIMITED`.
 4. On Command Center, verify `75 MT` eligible inventory and `125 MT` procurement shortage.
 5. Open **Market Prices**. Confirm the simulated-data disclosure; choose 7D, 30D, 90D, or 1Y; then use **Regional View**, **Movers**, and **Alerts**.
 6. Open **Tenders & BOQ**, select `TND-DEMO-200MT`, and inspect the Material requirements vs stock and Supplier allocations sections.

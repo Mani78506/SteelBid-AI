@@ -17,24 +17,25 @@ from app.calc.finance import q_qty
 
 FORM_PATTERNS = [
     ("PLATE", r"\b(plates?|ms plate|chequered plate)\b"),
-    ("BEAM", r"\b(i\s?beams?|is-\s?mb|universal beams?|ub\b| beams?)\b"),
-    ("CHANNEL", r"\bchannels?\b"),
-    ("ANGLE", r"\bangles?\b"),
+    ("BEAM", r"\b(i\s?beams?|is[-\s]?mb\s?\d*|universal beams?|ub\b| beams?)\b"),
+    ("CHANNEL", r"\b(is[-\s]?mc\s?\d*|channels?)\b"),
+    ("ANGLE", r"\b(isa\s?\d|angles?)\b"),
     ("PIPE", r"\bpipes?\b"),
     ("RHS", r"\b(rhs|rectangular hollow)\b"),
     ("SHS", r"\b(shs|square hollow)\b"),
     ("COIL", r"\b(hr coils?|cr coils?|coils?)\b"),
-    ("SHEET", r"\b(gp sheets?|sheets?)\b"),
+    ("SHEET", r"\b(gi sheets?|gp sheets?|sheets?)\b"),
     ("REBAR", r"\b(tmt|rebars?|reinforcement bars?)\b"),
     ("CHEQUERED", r"\bchequered\b"),
     ("ROUND_BAR", r"\b(round bars?|bright bars?|rounds)\b"),
 ]
-GRADE_PATTERN = re.compile(r"\b(E\d{3}[A-Z]{0,3}|IS\s?\d{3,5}|FE\s?\d{3}[A-Z]{0,2}|ASTM\s?A\d+|S\s?\d{3}[A-Z]{0,3})\b", re.I)
-QTY_PATTERN = re.compile(r"(\d[\d,]*(?:\.\d+)?)\s*(MT|KG|TON(?:NE)?S?|NOS?|PCS)\b", re.I)
+GRADE_PATTERN = re.compile(r"\b(E\d{3}[A-Z]{0,3}|FE\s?\d{3}[A-Z]{0,2}|ASTM\s?A\d+|S\s?\d{3}[A-Z]{0,3})\b", re.I)
+STANDARD_PATTERN = re.compile(r"\bIS\s?\d{3,5}\b", re.I)
+QTY_PATTERN = re.compile(r"(\d[\d,]*(?:\.\d+)?)\s*(MT|KG|TON(?:NE)?S?|NOS?|PCS|SQ\.?\s*M(?:TR)?|SQM|M2)\b", re.I)
 DIM_PATTERN = re.compile(r"(\d+(?:\.\d+)?\s?(?:mm|x\s?\d+(?:\.\d+)?\s?mm)+)", re.I)
 UNIT_NORMALIZE = {"TON": "MT", "TONS": "MT", "TONNE": "MT", "TONNES": "MT",
                   "NO": "NOS", "NOS": "NOS", "PC": "NOS", "PCS": "NOS",
-                  "MT": "MT", "KG": "KG"}
+                  "MT": "MT", "KG": "KG", "SQM": "SQM", "SQ M": "SQM", "SQ.M": "SQM", "M2": "SQM"}
 
 
 def extract_text_pages(pdf_path: str) -> list[tuple[int, str]]:
@@ -67,7 +68,8 @@ def parse_boq_lines(text: str) -> list[dict]:
             qty = Decimal(qty_match.group(1).replace(",", ""))
         except InvalidOperation:
             continue
-        unit = UNIT_NORMALIZE.get(qty_match.group(2).upper().rstrip("S").rstrip("E"), "MT")
+        raw_unit = re.sub(r"\s+", " ", qty_match.group(2).upper()).replace("SQ. ", "SQ ")
+        unit = UNIT_NORMALIZE.get(raw_unit, UNIT_NORMALIZE.get(raw_unit.rstrip("S").rstrip("E"), "MT"))
         if qty <= 0 or qty > Decimal("1000000"):
             continue  # implausible — likely a table artifact
         form = None
@@ -76,12 +78,13 @@ def parse_boq_lines(text: str) -> list[dict]:
                 form = f
                 break
         grade_match = GRADE_PATTERN.search(line)
+        standard_match = STANDARD_PATTERN.search(line)
         dims = DIM_PATTERN.findall(line)
         candidates.append({
             "raw_description": line[:500],
             "form": form,
             "grade": grade_match.group(1).upper().replace(" ", "") if grade_match else None,
-            "specification": {"dimensions": dims} if dims else {},
+            "specification": {k: v for k, v in {"dimensions": dims or None, "standard": standard_match.group(0).upper().replace(" ", " ") if standard_match else None}.items() if v is not None},
             "quantity": str(q_qty(qty)),
             "unit": unit,
             "confidence": "0.65" if form and grade_match else "0.45",

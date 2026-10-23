@@ -9,7 +9,7 @@ test("Market Intelligence uses analytics tabs and saved price alerts", async ({ 
   await page.getByRole("option", { name: /SteelBid Market Showcase/ }).first().click();
   await page.getByRole("link", { name: "Market Prices" }).click();
 
-  await expect(page.getByText("Market Showcase — Simulated Market Data")).toBeVisible();
+  await expect(page.getByText("Demo / synthetic").first()).toBeVisible();
   await page.getByRole("button", { name: "1Y" }).click();
   await page.getByRole("button", { name: "Regional View" }).click();
   await expect(page.getByText("Regional comparison")).toBeVisible();

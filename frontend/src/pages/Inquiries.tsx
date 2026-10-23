@@ -1,10 +1,10 @@
 import * as React from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useSearchParams } from "react-router";
-import { Plus, Trash2 } from "lucide-react";
+import { useNavigate, useSearchParams } from "react-router";
+import { ClipboardList, Clock3, Plus, Trash2 } from "lucide-react";
 import { get, post, type Page } from "@/lib/api";
 import type { Inquiry, Customer, Material, Availability } from "@/lib/types";
-import { Card, CardHeader, CardTitle, CardContent, Button, Input, Select, Label, Badge, Modal, ErrorState } from "@/components/ui";
+import { Card, CardHeader, CardTitle, CardContent, Button, Input, Select, Label, Badge, Modal, ErrorState, MetricCard, CompactChartCard } from "@/components/ui";
 import { DataTable } from "@/components/DataTable";
 import { useToast } from "@/components/Toast";
 import { fmtQty, fmtDate } from "@/lib/format";
@@ -15,6 +15,7 @@ interface Line { material_id: string; description: string; quantity: string; uni
 export default function Inquiries() {
   const qc = useQueryClient();
   const toast = useToast();
+  const navigate = useNavigate();
   const [params] = useSearchParams();
   const [open, setOpen] = React.useState(params.get("new") === "1");
   const [detail, setDetail] = React.useState<Inquiry | null>(null);
@@ -59,6 +60,8 @@ export default function Inquiries() {
     { accessorKey: "status", header: "Status", cell: (c) => <Badge value={c.getValue() as string} /> },
     { accessorKey: "received_at", header: "Received", cell: (c) => <span className="text-xs text-muted-foreground">{fmtDate(c.getValue() as string)}</span> },
   ];
+  const inquiries = list.data?.items ?? [];
+  const statusGroups = Object.entries(inquiries.reduce<Record<string, Inquiry[]>>((result, inquiry) => { (result[inquiry.status] ??= []).push(inquiry); return result; }, {}));
 
   return (
     <div className="mx-auto max-w-[1400px] space-y-4">
@@ -67,6 +70,8 @@ export default function Inquiries() {
           <p className="text-xs text-muted-foreground">{list.data?.total ?? "—"} inquiries</p></div>
         <Button size="sm" onClick={() => setOpen(true)}><Plus className="h-3.5 w-3.5" /> New inquiry</Button>
       </div>
+      <section className="grid gap-3 sm:grid-cols-3"><MetricCard label="Total inquiries" value={list.data?.total ?? "—"} hint="Customer requirements" icon={<ClipboardList className="h-5 w-5" />} /><MetricCard label="Workflow stages" value={list.data ? statusGroups.length : "—"} hint="Recorded inquiry statuses" icon={<Clock3 className="h-5 w-5" />} /><MetricCard label="Open requirements" value={list.data ? inquiries.filter((inquiry) => !["CLOSED", "CANCELLED", "CONVERTED"].includes(inquiry.status)).length : "—"} hint="Not closed or converted" icon={<Clock3 className="h-5 w-5" />} /></section>
+      <CompactChartCard title="Inquiry pipeline" subtitle="Actual records grouped by their current status"><div className="flex gap-3 overflow-x-auto pb-1">{statusGroups.length ? statusGroups.map(([status, rows]) => <div key={status} className="w-64 shrink-0 rounded-lg border border-border bg-muted/30 p-3"><div className="flex items-center justify-between"><Badge value={status} /><span className="text-xs text-muted-foreground">{rows.length}</span></div><div className="mt-3 space-y-2">{rows.slice(0, 4).map((inquiry) => <button key={inquiry.id} onClick={() => setDetail(inquiry)} className="w-full rounded-md border border-border bg-card p-2.5 text-left hover:border-primary-100"><p className="text-xs font-semibold">{inquiry.reference}</p><p className="mt-1 truncate text-xs text-muted-foreground">{inquiry.customer_name || "Customer not recorded"}</p><p className="mt-2 text-[11px] text-muted-foreground">{inquiry.items.length} requirement line(s)</p></button>)}</div></div>) : <p className="w-full py-12 text-center text-sm text-muted-foreground">No inquiries are available for a pipeline view.</p>}</div></CompactChartCard>
 
       {list.error ? <ErrorState error={list.error} onRetry={() => list.refetch()} />
         : <Card><DataTable columns={cols} data={list.data?.items} loading={list.isLoading} onRowClick={setDetail} emptyTitle="No inquiries yet" /></Card>}
@@ -103,7 +108,7 @@ export default function Inquiries() {
               </tbody>
             </table>
             <div className="flex justify-end">
-              <Button size="sm" onClick={() => { window.location.href = `/quotations?new=1&inquiry=${detail.id}&customer=${detail.customer_id}`; }}>
+              <Button size="sm" onClick={() => navigate(`/quotations?new=1&inquiry=${detail.id}&customer=${detail.customer_id}`)}>
                 Create quotation →
               </Button>
             </div>

@@ -5,6 +5,7 @@ from decimal import Decimal
 import pytest
 from sqlalchemy import select
 
+from app.models.identity import Organization
 from app.models.market import PriceObservation, PriceSource
 
 
@@ -28,8 +29,10 @@ BILLET,Fe500,South India,,EX_WORKS,52000,MT,INR,2026-10-17"""
     assert data["errors"] == []
 
     # Verify records were created
+    apex = db.scalar(select(Organization).where(Organization.name.ilike("%Apex%")))
     hrc_obs = db.scalar(
         select(PriceObservation).where(
+            PriceObservation.organization_id == apex.id,
             PriceObservation.material_form == "HRC",
             PriceObservation.grade == "E250",
             PriceObservation.price_basis == "EX_WORKS"
@@ -89,8 +92,10 @@ SCRAP,IS2062,East India,,EX_WORKS,42000,MT,INR,2026-10-18"""
 
     assert response.status_code == 201
 
+    apex = db.scalar(select(Organization).where(Organization.name.ilike("%Apex%")))
     scrap_obs = db.scalar(
         select(PriceObservation).where(
+            PriceObservation.organization_id == apex.id,
             PriceObservation.material_form == "SCRAP"
         )
     )

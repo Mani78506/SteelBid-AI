@@ -5,24 +5,100 @@ import csv
 import io
 
 from fastapi import APIRouter, Depends, Header, Query, UploadFile, File
-from sqlalchemy import desc, func, select
+from sqlalchemy import desc, func, inspect, select
 
 from app.calc.finance import q_money, q_ratio
 from app.core.deps import TenantContext, require
 from app.core.errors import bad_request, conflict, not_found
 from app.core.pagination import Page, PageParams, paginate
-from app.models.market import MarketImportBatch, MarketImportStagedRow, MarketPriceAlertEvent, MarketPriceAlertRule, MarketSource, PriceObservation, PriceScenario, PriceSource
+from app.models.market import GlobalCommodityBenchmark, MarketImportBatch, MarketImportStagedRow, MarketPriceAlertEvent, MarketPriceAlertRule, MarketSource, MarketSourceDocument, PriceObservation, PriceScenario, PriceSource
 from app.models.ops import Notification
 from app.schemas.market import (PriceObservationIn, PriceObservationOut, ScenarioIn,
                                 ScenarioOut, TrendOut, TrendPoint, PriceAlertIn, PriceAlertUpdate)
 from app.services.audit import record_audit
-from app.services.market_ingestion import ingest_observations
+from app.services.market_ingestion import ingest_observations, provider_classification
 from app.services.market_providers import ProviderObservation
 
 router = APIRouter(prefix="/market", tags=["market"])
 
 
 _PREVIEW_REQUIRED = ("material_form", "grade", "region", "price_per_unit", "currency", "unit", "price_basis", "observed_on")
+
+
+@router.get("/transparency")
+def market_data_transparency(ctx: TenantContext = Depends(require("read"))):
+    """Tenant-scoped provenance summary; World Bank benchmarks remain separate."""
+    observations = ctx.db.scalars(select(PriceObservation).where(
+        (PriceObservation.organization_id == ctx.org_id) | (PriceObservation.organization_id.is_(None))
+    )).all()
+    counts = {"VERIFIED_EXTERNAL": 0, "MANUAL_ENTRY": 0, "DEMO_SYNTHETIC": 0, "UNVERIFIED": 0}
+    source_rows: dict[str, dict] = {}
+    for observation in observations:
+        source = ctx.db.get(PriceSource, observation.source_id) if observation.source_id else None
+        if observation.is_synthetic:
+            classification = "DEMO_SYNTHETIC"
+        elif source and source.source_type == "MANUAL":
+            classification = "MANUAL_ENTRY"
+        else:
+            classification = "VERIFIED_EXTERNAL" if provider_classification(ctx.db, observation) in {"FREE_PUBLIC", "PAID_LICENSED", "AUTHORIZED_PROVIDER"} else "UNVERIFIED"
+        counts[classification] += 1
+        key = str(observation.source_id or "unattributed")
+        detail = source_rows.setdefault(key, {"source_id": str(observation.source_id) if observation.source_id else None,
+            "name": source.name if source else "Unattributed observation", "classification": classification,
+            "observations": 0, "last_observation_date": observation.observed_on.isoformat(), "source_document_id": str(observation.source_document_id) if observation.source_document_id else None,
+            "data_limitations": "No verified source document is linked." if classification == "UNVERIFIED" else None})
+        detail["observations"] += 1
+        if observation.observed_on.isoformat() > detail["last_observation_date"]:
+            detail["last_observation_date"] = observation.observed_on.isoformat()
+    # Older, populated databases may not yet have the optional World Bank
+    # benchmark table. Transparency must stay read-only and useful there.
+    benchmark_rows = []
+    if inspect(ctx.db.get_bind()).has_table("global_commodity_benchmarks"):
+        benchmark_rows = ctx.db.scalars(select(GlobalCommodityBenchmark).where(GlobalCommodityBenchmark.organization_id == ctx.org_id)).all()
+    benchmark_period = None
+    if benchmark_rows:
+        benchmark_period = {"from": min(point.observed_on for point in benchmark_rows).isoformat(), "to": max(point.observed_on for point in benchmark_rows).isoformat()}
+    return {"steel_price_counts": counts, "steel_price_total": len(observations),
+            "world_bank": {"observations": len(benchmark_rows), "series": len({point.commodity_name for point in benchmark_rows}),
+                           "period": benchmark_period, "publisher": "World Bank", "classification": "HISTORICAL_GLOBAL_BENCHMARK",
+                           "attribution": "World Bank Commodity Markets, The Pink Sheet — CC BY 4.0. Not live and not Indian steel prices."},
+            "sources": list(source_rows.values())}
+
+
+@router.get("/benchmarks")
+def global_commodity_benchmarks(ctx: TenantContext = Depends(require("read"))):
+    """Global public benchmarks. They are not Indian steel prices."""
+    rows = ctx.db.execute(select(GlobalCommodityBenchmark, MarketSourceDocument).join(
+        MarketSourceDocument, GlobalCommodityBenchmark.source_document_id == MarketSourceDocument.id).where(
+        GlobalCommodityBenchmark.organization_id == ctx.org_id).order_by(
+        GlobalCommodityBenchmark.observed_on.desc(), GlobalCommodityBenchmark.created_at.desc())).all()
+    latest: dict[str, tuple[GlobalCommodityBenchmark, MarketSourceDocument]] = {}
+    for benchmark, document in rows:
+        latest.setdefault(benchmark.commodity_name, (benchmark, document))
+    return {"classification": "GLOBAL_COMMODITY_BENCHMARKS_NOT_INDIAN_STEEL_PRICES",
+            "attribution": "World Bank Commodity Markets, The Pink Sheet — CC BY 4.0.",
+            "items": [{"commodity_name": point.commodity_name, "price_value": str(point.price_value),
+                       "currency": point.currency, "original_unit": point.original_unit,
+                       "observed_on": point.observed_on.isoformat(), "publication_date": doc.published_at.isoformat() if doc.published_at else None,
+                       "source": doc.publisher, "source_url": doc.original_document_url,
+                       "checksum": doc.sha256_checksum} for point, doc in latest.values()]}
+
+
+@router.get("/benchmarks/history")
+def global_commodity_benchmark_history(commodity_name: str, months: int = Query(60, ge=1, le=780),
+                                       ctx: TenantContext = Depends(require("read"))):
+    cutoff = date.today() - timedelta(days=months * 31)
+    rows = ctx.db.execute(select(GlobalCommodityBenchmark, MarketSourceDocument).join(
+        MarketSourceDocument, GlobalCommodityBenchmark.source_document_id == MarketSourceDocument.id).where(
+        GlobalCommodityBenchmark.organization_id == ctx.org_id,
+        GlobalCommodityBenchmark.commodity_name == commodity_name,
+        GlobalCommodityBenchmark.observed_on >= cutoff).order_by(GlobalCommodityBenchmark.observed_on)).all()
+    return {"classification": "GLOBAL_COMMODITY_BENCHMARKS_NOT_INDIAN_STEEL_PRICES",
+            "commodity_name": commodity_name,
+            "points": [{"price_value": str(point.price_value), "currency": point.currency,
+                        "original_unit": point.original_unit, "observed_on": point.observed_on.isoformat(),
+                        "publication_date": doc.published_at.isoformat() if doc.published_at else None,
+                        "source": doc.publisher, "source_url": doc.original_document_url} for point, doc in rows]}
 
 
 def _preview_row(row: dict[str, str], row_number: int) -> tuple[dict, list[str], str | None]:
@@ -298,8 +374,12 @@ def freshness(ctx: TenantContext = Depends(require("read"))):
 # no entitlement relationship yet; including global rows here would silently
 # broaden redistribution.  Provider work will add that explicit relationship.
 
-def _owned_observations(ctx: TenantContext):
-    return select(PriceObservation).where(PriceObservation.organization_id == ctx.org_id)
+def _owned_observations(ctx: TenantContext, *, include_synthetic: bool = True):
+    """Tenant observations plus shared official intelligence; never demo fallback in genuine mode."""
+    stmt = select(PriceObservation).where((PriceObservation.organization_id == ctx.org_id) | (PriceObservation.organization_id.is_(None)))
+    if not include_synthetic:
+        stmt = stmt.where(PriceObservation.is_synthetic.is_(False))
+    return stmt
 
 
 def _source_name(ctx: TenantContext, observation: PriceObservation) -> str:
@@ -308,6 +388,7 @@ def _source_name(ctx: TenantContext, observation: PriceObservation) -> str:
 
 
 def _observation_payload(ctx: TenantContext, observation: PriceObservation) -> dict:
+    source = ctx.db.get(PriceSource, observation.source_id) if observation.source_id else None
     return {
         "id": str(observation.id), "material_form": observation.material_form,
         "grade": observation.grade, "region": observation.region,
@@ -315,7 +396,10 @@ def _observation_payload(ctx: TenantContext, observation: PriceObservation) -> d
         "unit": observation.unit, "price_per_unit": str(observation.price_per_unit),
         "observed_on": observation.observed_on.isoformat(),
         "source_id": str(observation.source_id) if observation.source_id else None,
-        "source": _source_name(ctx, observation), "is_synthetic": observation.is_synthetic,
+        "source": source.name if source else "Unattributed observation",
+        "source_type": source.source_type if source else "UNKNOWN",
+        "provider_class": __import__("app.services.market_ingestion", fromlist=["provider_classification"]).provider_classification(ctx.db, observation),
+        "is_synthetic": observation.is_synthetic,
         "freshness_days": (date.today() - observation.observed_on).days,
     }
 
@@ -323,9 +407,9 @@ def _observation_payload(ctx: TenantContext, observation: PriceObservation) -> d
 def _comparable_rows(
     ctx: TenantContext, *, form: str, grade: str, region: str,
     price_basis: str, currency: str, unit: str, source_id: UUID | None,
-    since: date | None = None,
+    since: date | None = None, include_synthetic: bool = True,
 ) -> tuple[list[PriceObservation], str | None]:
-    stmt = _owned_observations(ctx).where(
+    stmt = _owned_observations(ctx, include_synthetic=include_synthetic).where(
         PriceObservation.material_form == form, PriceObservation.grade == grade,
         PriceObservation.region == region, PriceObservation.price_basis == price_basis,
         PriceObservation.currency == currency, PriceObservation.unit == unit)
@@ -359,12 +443,14 @@ def intelligence_history(
     material_form: str, grade: str, region: str, price_basis: str,
     currency: str = "INR", unit: str = "MT", source_id: UUID | None = None,
     days: int = Query(30, ge=7, le=365),
+    include_synthetic: bool = Query(True),
     ctx: TenantContext = Depends(require("read")),
 ):
     """Comparable historical observations; never interpolates missing dates."""
     rows, reason = _comparable_rows(ctx, form=material_form, grade=grade, region=region,
                                     price_basis=price_basis, currency=currency, unit=unit,
-                                    source_id=source_id, since=date.today() - timedelta(days=days))
+                                    source_id=source_id, since=date.today() - timedelta(days=days),
+                                    include_synthetic=include_synthetic)
     if reason:
         return {"status": "insufficient_data", "reason": reason, "points": []}
     return {"status": "ok" if rows else "insufficient_data",
@@ -379,11 +465,12 @@ def intelligence_history(
 def intelligence_latest(
     material_form: str, grade: str, region: str, price_basis: str,
     currency: str = "INR", unit: str = "MT", source_id: UUID | None = None,
+    include_synthetic: bool = Query(True),
     ctx: TenantContext = Depends(require("read")),
 ):
     rows, reason = _comparable_rows(ctx, form=material_form, grade=grade, region=region,
                                     price_basis=price_basis, currency=currency, unit=unit,
-                                    source_id=source_id)
+                                    source_id=source_id, include_synthetic=include_synthetic)
     if reason or not rows:
         return {"status": "insufficient_data", "reason": reason or "No comparable observations.", "latest": None}
     latest = rows[-1]
@@ -396,9 +483,9 @@ def intelligence_latest(
 
 
 @router.get("/intelligence/overview")
-def intelligence_overview(limit: int = Query(24, ge=1, le=100), ctx: TenantContext = Depends(require("read"))):
+def intelligence_overview(limit: int = Query(24, ge=1, le=100), include_synthetic: bool = Query(True), ctx: TenantContext = Depends(require("read"))):
     """One latest record per fully compatible series; no cross-series averages."""
-    rows = ctx.db.scalars(_owned_observations(ctx).order_by(PriceObservation.observed_on.desc(), PriceObservation.created_at.desc())).all()
+    rows = ctx.db.scalars(_owned_observations(ctx, include_synthetic=include_synthetic).order_by(PriceObservation.observed_on.desc(), PriceObservation.created_at.desc())).all()
     latest_by_series: dict[tuple, PriceObservation] = {}
     for row in rows:
         identity = (row.material_form, row.grade, row.region, row.price_basis, row.currency, row.unit, row.source_id)

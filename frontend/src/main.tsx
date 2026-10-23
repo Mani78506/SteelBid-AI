@@ -12,7 +12,10 @@ qc.setDefaultOptions({
   queries: {
     retry: (count, err) => !(err instanceof ApiError && err.status < 500) && count < 2,
     refetchOnWindowFocus: false,
-    staleTime: 15_000,
+    // Keep recently-loaded views stable while users open menus, drawers and
+    // filters. Mutations still explicitly invalidate the affected queries.
+    staleTime: 60_000,
+    refetchOnMount: false,
   },
 });
 

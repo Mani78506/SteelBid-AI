@@ -3,8 +3,9 @@
 Idempotent: safe to run repeatedly. Refuses to run when DEMO_MODE=false (production).
 All demo data is visibly fictional: [DEMO] prefixes, is_demo flags, labeled synthetic prices.
 """
-from datetime import timedelta
+from datetime import timedelta, datetime, timezone, date
 from decimal import Decimal
+from hashlib import sha256
 
 from sqlalchemy import select
 
@@ -17,8 +18,10 @@ from app.models.procurement import (PurchaseOrder, PurchaseOrderItem, PurchaseRe
 from app.models.sales import SalesOrderItem
 from app.models.fabrication import (BOMItem, BOMVersion, MaterialAllocation,
                                     ProductionOperation, QualityInspection, Routing, WorkOrder)
-from app.models.inventory import Reservation
-from app.models.market import MarketPriceAlertRule, PriceObservation, PriceSource
+from app.models.inventory import Reservation, Warehouse, StockLot, InventoryMovement
+from app.models.materials import OrganizationMaterial
+from app.models.crm import Customer
+from app.models.market import MarketPriceAlertRule, MarketSource, MarketSourceDocument, PriceObservation, PriceSource
 from app.models.ops import CostEstimate, CostLine, Dispatch, DispatchItem, Invoice, Notification, Payment
 from app.models.projects import BOQItem, Project, ProjectRequirement, Tender, TenderRequirementSnapshot, TenderSupplierSelection
 from app.seed.demo import (CATALOG, NOW, TODAY, get_or_create, seed_catalog, seed_customers,
@@ -33,11 +36,17 @@ def _password() -> str:
     return settings.demo_admin_password
 
 
-def seed_org(db, *, key: str, name: str, profiles: list[str]):
-    org, _ = get_or_create(db, Organization, name=name,
-                           defaults=dict(id=uid(f"org:{key}"), business_profiles=profiles,
-                                         currency_code="INR", timezone="Asia/Kolkata",
-                                         is_demo=True))
+def seed_org(db, *, key: str, name: str, profiles: list[str], is_demo: bool = True):
+    # The deterministic key is the durable fixture identity. Looking up by name
+    # made a presentation-name change try to insert the same UUID again.
+    org, created = get_or_create(db, Organization, id=uid(f"org:{key}"),
+                                 defaults=dict(name=name, business_profiles=profiles,
+                                               currency_code="INR", timezone="Asia/Kolkata",
+                                               is_demo=is_demo))
+    if not created:
+        org.name = name
+        org.business_profiles = profiles
+        org.is_demo = is_demo
     return org
 
 
@@ -650,6 +659,145 @@ def seed_market_showcase(db, admin: User) -> Organization:
     return org
 
 
+def seed_jayraj_workspace(db) -> Organization:
+    """Create an independently scoped, empty customer-onboarding workspace.
+
+    No company registration, inventory, suppliers, tenders, rates, or customer
+    relationships are inferred. It receives only the shared steel catalog as
+    its own tenant material master.
+    """
+    org = seed_org(db, key="jayraj-steel", name="JAYRAJ STEEL PRIVATE LIMITED",
+                   profiles=["TRADER", "DISTRIBUTOR", "CONTRACTOR"], is_demo=False)
+    seed_org_materials(db, org, "JRS")
+    return org
+
+
+def seed_jayraj_training_tenders(db, admin: User, org: Organization) -> None:
+    """Add reversible, explicitly simulated training opportunities to Jayraj only.
+
+    These records intentionally contain no source URL, supplier quotation, inventory or
+    commercial approval.  The first opportunity supplies a reviewable seven-line BOQ
+    so the real tender workflow can be demonstrated after a user approves mappings.
+    """
+    get_or_create(
+        db, Customer, organization_id=org.id, code="DEMO-JRS-CUSTOMER",
+        defaults=dict(id=uid("jayraj-training-customer"), name="[TRAINING] Warehouse Project Customer",
+                      category="SIMULATED TRAINING", credit_terms_days=0, is_active=True, is_demo=True))
+    tender_specs = [
+        ("DEMO-JRS-WH-001", "[TRAINING TENDER] Structural Steel Supply for Industrial Warehouse", "INDUSTRIAL", "Hyderabad", 8,
+         "Fictional training scenario for an industrial warehouse. No government issuer or source document is represented."),
+        ("DEMO-JRS-BRG-002", "[TRAINING TENDER] Structural Steel for Access Bridge", "BRIDGE", "Mumbai", 12,
+         "Fictional training scenario. Requirements must be uploaded or entered and reviewed before costing."),
+        ("DEMO-JRS-FAB-003", "[TRAINING TENDER] Fabricated Steel Platform Package", "FABRICATION", "Chennai", 16,
+         "Fictional training scenario. No supplier quotation is attached."),
+        ("DEMO-JRS-BLD-004", "[TRAINING TENDER] Pre-Engineered Building Steel Package", "BUILDING", "Delhi NCR", 21,
+         "Fictional training scenario. No external tender notice is claimed."),
+        ("DEMO-JRS-IND-005", "[TRAINING TENDER] Process Plant Structural Members", "INDUSTRIAL", "Kolkata", 27,
+         "Fictional training scenario. Commercial inputs require explicit demo approval."),
+        ("DEMO-JRS-RLY-006", "[TRAINING TENDER] Yard Steel Support Works", "RAILWAY", "Hyderabad", 34,
+         "Fictional training scenario. Not an authentic railway procurement notice."),
+    ]
+    for number, title, project_type, location, due_in, description in tender_specs:
+        tender, created = get_or_create(
+            db, Tender, organization_id=org.id, number=number,
+            defaults=dict(id=uid(f"jayraj-training-tender:{number}"), title=title,
+                          customer="Training scenario — no external issuer", project_type=project_type,
+                          location=location, submission_deadline=NOW + timedelta(days=due_in),
+                          description=description, status="DRAFT", is_demo=True,
+                          data_classification="SIMULATED", source_type="TRAINING_SCENARIO",
+                          original_source_url=None, publication_date=None,
+                          rate_approval_status="DEMO_INPUT_REQUIRED"))
+        if not created:
+            # Only our deterministic DEMO references are refreshed; genuine Jayraj rows are untouched.
+            tender.title = title
+            tender.customer = "Training scenario — no external issuer"
+            tender.description = description
+            tender.is_demo = True
+            tender.data_classification = "SIMULATED"
+            tender.source_type = "TRAINING_SCENARIO"
+            tender.rate_approval_status = "DEMO_INPUT_REQUIRED"
+
+    training_materials = [
+        ("BEAM", "E250", "IS 2062", "ISMB 300", "MT", "[TRAINING] ISMB 300 Beam E250"),
+        ("CHANNEL", "E250", "IS 2062", "ISMC 200", "MT", "[TRAINING] ISMC 200 Channel E250"),
+        ("ANGLE", "E250", "IS 2062", "ISA 75x75x6", "MT", "[TRAINING] ISA 75x75x6 Angle E250"),
+        ("PLATE", "E250", "IS 2062", "10 mm", "MT", "[TRAINING] MS Plate 10 mm E250"),
+        ("GI_SHEET", "Z120", "IS 277", "Z120 coating", "SQM", "[TRAINING] GI Sheet IS 277 Z120"),
+        ("REBAR", "FE500D", "IS 1786", "12 mm", "MT", "[TRAINING] TMT Fe 500D 12 mm"),
+        ("REBAR", "FE550D", "IS 1786", "16 mm", "MT", "[TRAINING] TMT Fe 550D 16 mm"),
+    ]
+    materials: dict[str, OrganizationMaterial] = {}
+    for index, (form, grade, standard, dimensions, unit, name) in enumerate(training_materials, 1):
+        sku = f"JRS-TRAIN-{index:02d}"
+        material, _ = get_or_create(
+            db, OrganizationMaterial, organization_id=org.id, sku=sku,
+            defaults=dict(id=uid(f"jayraj-training-material:{sku}"), name=name, form=form,
+                          grade=grade, standard=standard, base_unit=unit,
+                          specification={"dimensions": dimensions, "data_classification": "SIMULATED",
+                                         "usage": "Training tender mapping only"}, is_active=True))
+        materials[sku] = material
+
+    # Dedicated simulated warehouse: training stock never alters an operational Jayraj lot.
+    training_wh, _ = get_or_create(db, Warehouse, organization_id=org.id, code="JRS-TRAINING",
+        defaults=dict(id=uid("jayraj-training-warehouse"), name="[TRAINING] Tender Demo Warehouse",
+                      location="Simulated training location", is_active=True))
+    training_stock = [("JRS-TRAIN-01", "10", "MT", "28000"), ("JRS-TRAIN-02", "5", "MT", "27500"),
+        ("JRS-TRAIN-03", "3", "MT", "29000"), ("JRS-TRAIN-04", "6", "MT", "31000"),
+        ("JRS-TRAIN-05", "1500", "SQM", "650"), ("JRS-TRAIN-06", "4", "MT", "42000"),
+        ("JRS-TRAIN-07", "2", "MT", "43000")]
+    for sku, quantity, unit, unit_cost in training_stock:
+        lot, created = get_or_create(db, StockLot, organization_id=org.id, material_id=materials[sku].id,
+            warehouse_id=training_wh.id, lot_number=f"TRAINING-{sku}", defaults=dict(
+                id=uid(f"jayraj-training-lot:{sku}"), heat_number="SIMULATED", quality_status="OK",
+                on_hand_qty=Decimal(quantity), reserved_qty=Decimal("0"), unit=unit, unit_cost=Decimal(unit_cost),
+                source={"classification":"TRAINING","simulated":True,"reference":"JRS-TRAINING-RECEIPT"}))
+        if created:
+            db.add(InventoryMovement(id=uid(f"jayraj-training-receipt:{sku}"), organization_id=org.id,
+                material_id=materials[sku].id, warehouse_id=training_wh.id, stock_lot_id=lot.id,
+                movement_type="RECEIPT", quantity=Decimal(quantity), unit=unit,
+                balance_after_on_hand=Decimal(quantity), reference={"classification":"TRAINING","simulated":True},
+                idempotency_key=f"seed:jayraj-training-receipt:{sku}"))
+
+    warehouse = db.scalar(select(Tender).where(Tender.organization_id == org.id,
+                                                Tender.number == "DEMO-JRS-WH-001"))
+    assert warehouse is not None
+    lines = [
+        ("ST-01", "ISMB 300 E250 structural beams, IS 2062", "BEAM", "E250", "JRS-TRAIN-01", "24", "MT", "ISMB 300"),
+        ("ST-02", "ISMC 200 E250 structural channels, IS 2062", "CHANNEL", "E250", "JRS-TRAIN-02", "12", "MT", "ISMC 200"),
+        ("ST-03", "ISA 75x75x6 E250 structural angles, IS 2062", "ANGLE", "E250", "JRS-TRAIN-03", "8", "MT", "ISA 75x75x6"),
+        ("ST-04", "MS Plate 10 mm E250, IS 2062", "PLATE", "E250", "JRS-TRAIN-04", "16", "MT", "10 mm"),
+        ("ST-05", "GI Sheet Z120, IS 277", "GI_SHEET", "Z120", "JRS-TRAIN-05", "4200", "SQM", "Z120 coating"),
+        ("ST-06", "TMT Fe 500D 12 mm, IS 1786", "REBAR", "FE500D", "JRS-TRAIN-06", "10", "MT", "12 mm"),
+        ("ST-07", "TMT Fe 550D 16 mm, IS 1786", "REBAR", "FE550D", "JRS-TRAIN-07", "6", "MT", "16 mm"),
+    ]
+    for line_no, raw, form, grade, sku, quantity, unit, dimensions in lines:
+        get_or_create(
+            db, BOQItem, tender_id=warehouse.id, organization_id=org.id, line_no=line_no,
+            defaults=dict(id=uid(f"jayraj-training-boq:{line_no}"), raw_description=raw, form=form, grade=grade,
+                          specification={"standard": next(m.standard for key, m in materials.items() if key == sku),
+                                         "dimensions": dimensions, "data_classification": "SIMULATED"},
+                          quantity=Decimal(quantity), unit=unit, material_id=materials[sku].id,
+                          review_status="PENDING", source="MANUAL",
+                          page_ref="SIMULATED TRAINING SCHEDULE"))
+
+
+def seed_pib_october_release(db) -> None:
+    """Idempotently store the official PIB/JPC Jul-Sep 2026 four-metro series."""
+    url = "https://www.pib.gov.in/PressReleaseIframePage.aspx?PRID=2319469&lang=2&reg=48"
+    source, _ = get_or_create(db, MarketSource, name="Ministry of Steel / PIB — JPC steel prices", organization_id=None,
+        defaults=dict(id=uid("market-source:pib:2319469"), provenance_classification="OFFICIAL_REFERENCE", reference_url=url,
+        attribution_text="Ministry of Steel / Press Information Bureau; provisional JPC data.", license_status="APPROVED", visibility="GLOBAL", redistribution_permitted=True))
+    checksum = sha256(url.encode()).hexdigest()
+    document, _ = get_or_create(db, MarketSourceDocument, source_id=source.id, sha256_checksum=checksum,
+        defaults=dict(id=uid("market-document:pib:2319469"), original_document_url=url, publisher="Ministry of Steel / Press Information Bureau", document_title="India's Steel Sector Posts Steady Growth in H1 FY 2026–27", published_at=datetime(2026,10,6,tzinfo=timezone.utc), reporting_period="Jul-Sep 2026", retrieved_at=datetime.now(timezone.utc), extraction_status="EXTRACTED", reuse_basis="Official public PIB release; URL retained as source evidence."))
+    price_source, _ = get_or_create(db, PriceSource, organization_id=None, name="Ministry of Steel / PIB (official reference)", defaults=dict(id=uid("price-source:pib:2319469"), source_type="PROVIDER", provider_key="pib-jpc-2319469", is_synthetic=False))
+    rows = [("TMT","", "10 mm", [56698,58002,65298]), ("HRC","", "2 mm", [69828,70448,76085]), ("CRC","", "0.63 mm", [76582,76462,84972]), ("GP_SHEET","", "0.63 mm", [86415,86668,94148])]
+    for form, grade, dimension, values in rows:
+        for month, value in zip((7,8,9), values):
+            observed = date(2026, month, 1)
+            get_or_create(db, PriceObservation, external_observation_id=f"pib-2319469-{form}-{month}", defaults=dict(id=uid(f"pib-2319469:{form}:{month}"), organization_id=None, source_id=price_source.id, source_document_id=document.id, material_form=form, grade=grade, region="India four-metro average", dimension_note=f"{dimension}; GST included; national four-metro average", price_basis="RETAIL_GST_INCLUDED", price_per_unit=Decimal(value), unit="MT", currency="INR", observed_on=observed, is_synthetic=False))
+
+
 def run_seed() -> dict:
     if not settings.demo_mode:
         raise SystemExit("Refusing to seed demo data: DEMO_MODE=false (production safety).")
@@ -658,6 +806,7 @@ def run_seed() -> dict:
     try:
         seed_catalog(db)
         seed_prices(db)
+        seed_pib_october_release(db)
 
         orgs = {}
         orgs["apex"] = seed_org(db, key="apex", name="[DEMO] Apex Steel Traders Pvt Ltd",
@@ -673,6 +822,7 @@ def run_seed() -> dict:
         orgs["market_showcase"] = seed_org(db, key="market-showcase",
                                             name="[DEMO] SteelBid Market Showcase",
                                             profiles=["CONTRACTOR", "TRADER"])
+        orgs["jayraj"] = seed_jayraj_workspace(db)
 
         # Shared super-demo user (member of all four orgs) for org-switching demo
         seed_user(db, settings.demo_admin_email, "Demo Admin (all companies)",
@@ -689,7 +839,8 @@ def run_seed() -> dict:
         for key, email in (("apex", "admin@apex.demo"), ("metro", "admin@metro.demo"),
                            ("precision", "admin@precision.demo"),
                            ("railbuild", "admin@railbuild.demo"),
-                           ("market_showcase", "admin@showcase.demo")):
+                           ("market_showcase", "admin@showcase.demo"),
+                           ("jayraj", "admin@jayraj.demo")):
             admins[key] = seed_user(db, email, f"Demo Admin — {key.title()}",
                                     [(orgs[key], "ADMIN")])
         db.commit()
@@ -700,6 +851,7 @@ def run_seed() -> dict:
         seed_precision_fabricator(db, admins["precision"])
         seed_railbuild_contractor(db, admins["railbuild"])
         seed_market_showcase(db, admins["market_showcase"])
+        seed_jayraj_training_tenders(db, admins["jayraj"], orgs["jayraj"])
         db.commit()
 
         from sqlalchemy import func

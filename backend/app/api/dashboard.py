@@ -7,18 +7,68 @@ from sqlalchemy import func, select, and_, or_
 from app.ai.briefing import generate_daily_briefing
 from app.calc.finance import ZERO, gross_margin, q_money
 from app.core.deps import TenantContext, require
+from app.core.errors import not_found
 from app.models.crm import Customer, CustomerInquiry
 from app.models.inventory import StockLot, Warehouse, Reservation
 from app.models.market import PriceObservation, PriceScenario, PriceSource
 from app.models.materials import OrganizationMaterial
 from app.models.ops import Approval, AuditEvent, Dispatch, Invoice, Payment
 from app.models.procurement import PurchaseOrder, PurchaseRequest, Supplier, SupplierQuote, RFQ
-from app.models.projects import Tender
+from app.models.projects import Tender, BOQItem, TenderWorkflow
 from app.models.fabrication import WorkOrder, BOMItem
 from app.models.sales import Quotation, QuotationVersion, SalesOrder
 from app.schemas.ops import DashboardSummary, EnhancedDashboardSummary
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
+
+
+@router.get("/tender-context/{tender_id}")
+def tender_context(tender_id: str, ctx: TenantContext = Depends(require("read"))):
+    """Selected-tender dashboard facts.  No portfolio values are mixed into this view."""
+    db = ctx.db
+    tender = db.scalar(select(Tender).where(Tender.id == tender_id, Tender.organization_id == ctx.org_id))
+    if tender is None:
+        raise not_found("Tender")
+    workflow = db.scalar(select(TenderWorkflow).where(TenderWorkflow.tender_id == tender.id,
+                                                       TenderWorkflow.organization_id == ctx.org_id))
+    rows = db.scalars(select(BOMItem).where(BOMItem.bom_version_id == workflow.bom_version_id)).all() if workflow and workflow.bom_version_id else []
+    if not rows:
+        # A BOQ is demand evidence, even when engineering has not yet approved a BOM.
+        # Do not report a zero requirement merely because the downstream BOM is absent.
+        boq_rows = db.execute(select(BOQItem.unit, func.coalesce(func.sum(BOQItem.quantity), 0)).where(
+            BOQItem.tender_id == tender.id, BOQItem.organization_id == ctx.org_id,
+            BOQItem.review_status != "REJECTED", BOQItem.quantity.isnot(None), BOQItem.unit.isnot(None))
+            .group_by(BOQItem.unit)).all()
+        boq_totals = {unit: str(quantity) for unit, quantity in boq_rows}
+        return {"tender_id": str(tender.id), "status": "AWAITING_APPROVED_BOM", "coverage": {},
+                "materials": [], "grade_distribution": [], "unit_totals": boq_totals,
+                "boq_unit_totals": boq_totals, "has_estimate": False}
+    unit_totals: dict[str, dict[str, Decimal]] = {}
+    materials = []
+    grades: dict[str, Decimal] = {}
+    for item in rows:
+        available = Decimal(str(db.scalar(select(func.coalesce(func.sum(StockLot.on_hand_qty - StockLot.reserved_qty), 0)).where(
+            StockLot.organization_id == ctx.org_id, StockLot.material_id == item.material_id,
+            StockLot.quality_status == "OK")) or 0))
+        required = Decimal(str(item.quantity)); covered = min(required, available); shortage = max(ZERO, required - covered)
+        material = db.get(OrganizationMaterial, item.material_id)
+        unit = item.unit
+        totals = unit_totals.setdefault(unit, {"required": ZERO, "available": ZERO, "covered": ZERO, "uncovered": ZERO})
+        for key, value in (("required", required), ("available", available), ("covered", covered), ("uncovered", shortage)):
+            totals[key] += value
+        grade = material.grade if material else "Unspecified"
+        grades[grade] = grades.get(grade, ZERO) + required
+        materials.append({"name": material.name if material else "Unresolved material", "form": material.form if material else None,
+                          "grade": grade, "unit": unit, "required": str(required), "available": str(available),
+                          "covered": str(covered), "uncovered": str(shortage)})
+    coverage = {unit: {**{k: str(v) for k, v in totals.items()},
+                       "percent": str((totals["covered"] / totals["required"] * 100) if totals["required"] else ZERO)}
+                for unit, totals in unit_totals.items()}
+    return {"tender_id": str(tender.id), "status": "READY", "coverage": coverage, "materials": materials,
+            "grade_distribution": [{"grade": k, "quantity": str(v)} for k, v in grades.items()],
+            "unit_totals": {u: str(v["required"]) for u, v in unit_totals.items()},
+            "has_estimate": bool(workflow and workflow.cost_estimate_id),
+            "cost_estimate_id": str(workflow.cost_estimate_id) if workflow and workflow.cost_estimate_id else None}
 
 
 @router.get("/summary", response_model=DashboardSummary)
@@ -387,12 +437,16 @@ def enhanced_summary(days: int = Query(30, ge=1, le=365), ctx: TenantContext = D
             "material_readiness": f"{ready_count}/{total_count} items ready"
         })
 
-    # Tender-specific shortages (linking tender BOQ to inventory)
+    # Portfolio shortage KPI: approved tender BOMs only, tenant-scoped and unit-safe.
+    # Draft BOQs remain visible in the tender workspace but are not misrepresented as procurement commitments.
     tender_shortages = []
-    for tender_id in db.scalars(select(Tender.id).where(
+    for tender_id, bom_version_id in db.execute(select(Tender.id, TenderWorkflow.bom_version_id).join(
+        TenderWorkflow, (TenderWorkflow.tender_id == Tender.id) & (TenderWorkflow.organization_id == Tender.organization_id)).where(
         Tender.organization_id == org,
-        Tender.status.in_(["DRAFT", "IN_REVIEW", "ESTIMATING"])).limit(3)).all():
-        for bi in db.scalars(select(BOQItem).where(BOQItem.tender_id == tender_id)).all():
+        Tender.status.in_(["DRAFT", "IN_REVIEW", "ESTIMATING"]), TenderWorkflow.bom_version_id.isnot(None))).all():
+        for bi in db.scalars(select(BOMItem).where(BOMItem.bom_version_id == bom_version_id,
+                                                    BOMItem.organization_id == org,
+                                                    BOMItem.unit == "MT")).all():
             from app.services.inventory import material_availability
             avail = material_availability(None, db, org, bi.material_id)
             if avail["available"] < bi.quantity:

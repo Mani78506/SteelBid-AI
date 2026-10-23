@@ -37,6 +37,12 @@ class TenderIn(BaseModel):
     estimated_value: Decimal | None = None
     currency: str = "INR"
     description: str | None = None
+    is_demo: bool = False
+    data_classification: str = "OPERATIONAL"
+    source_type: str = "USER_UPLOAD"
+    original_source_url: str | None = Field(default=None, max_length=1000)
+    publication_date: datetime | None = None
+    rate_approval_status: str = "NOT_APPLICABLE"
 
 
 class TenderUpdate(BaseModel):
@@ -46,6 +52,7 @@ class TenderUpdate(BaseModel):
     submission_deadline: datetime | None = None
     estimated_value: Decimal | None = None
     description: str | None = None
+    rate_approval_status: str | None = None
 
 
 class TenderStatusIn(BaseModel):
