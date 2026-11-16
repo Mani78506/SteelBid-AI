@@ -10,6 +10,7 @@ import { useToast } from "@/components/Toast";
 import { fmtMoney, fmtQty, fmtDate, daysUntil } from "@/lib/format";
 import type { ColumnDef } from "@tanstack/react-table";
 import { TenderSubmissionPanel, type OutcomeForm } from "@/components/tenders/TenderSubmissionPanel";
+import { useAuth } from "@/lib/auth";
 
 interface Tender { id: string; number: string; title: string; customer: string | null; project_type: string;
   location: string | null; submission_deadline: string | null; estimated_value: string | null;
@@ -28,6 +29,7 @@ interface Material { id:string; sku:string; name:string; form:string; grade:stri
 interface TenderSourceProfile { id:string; name:string; source_category:string; permitted_ingestion_method:string; data_classification:"AUTHENTIC"|"DEMO"|"FIXTURE_TEST"; enabled_for_tender_ingestion:boolean; attribution_text:string; license_status:string; usage_restrictions:string|null }
 
 export default function Tenders() {
+  const { activeOrg } = useAuth();
   const qc = useQueryClient();
   const toast = useToast();
   const navigate = useNavigate();
@@ -41,6 +43,7 @@ export default function Tenders() {
   const [intakeOpen, setIntakeOpen] = React.useState(false);
   const [intakeFile, setIntakeFile] = React.useState<File | null>(null);
   const [intake, setIntake] = React.useState({ number: "", title: "", project_type: "INDUSTRIAL", sourceId: "", officialUrl: "", evidence: "", externalReference: "" });
+  const workspaceName = activeOrg?.name ?? "your organization";
   const [offersFor, setOffersFor] = React.useState<{id:string; form:string|null; grade:string|null; quantity:string; unit:string}|null>(null);
   const [f, setF] = React.useState({ number: "", title: "", customer: "", project_type: "BRIDGE", location: "", submission_deadline: "", estimated_value: "" });
   const [customerId, setCustomerId] = React.useState("");
@@ -190,7 +193,7 @@ export default function Tenders() {
     <div className="mx-auto max-w-[1450px] space-y-5">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div><h1 className="text-lg font-bold">Tender Discovery & BOQ</h1>
-          <p className="text-xs text-muted-foreground">{list.data?.total ?? "—"} Jayraj-scoped tenders · extraction results always require human review</p></div>
+          <p className="text-xs text-muted-foreground">{list.data?.total ?? "—"} {workspaceName}-scoped tenders · extraction results always require human review</p></div>
         <div className="flex gap-2"><Button size="sm" variant="outline" loading={uploadNewTenderMut.isPending} onClick={() => setIntakeOpen(true)}><UploadCloud className="h-3.5 w-3.5" /> Register tender opportunity</Button><Button size="sm" onClick={() => setCreateOpen(true)}><Plus className="h-3.5 w-3.5" /> New tender</Button></div>
       </div>
 
@@ -442,7 +445,7 @@ export default function Tenders() {
       <Modal open={intakeOpen} onClose={() => { if (!uploadNewTenderMut.isPending) setIntakeOpen(false); }} title="Register tender opportunity">
         <div className="space-y-4">
           <div className="rounded-lg border border-blue-200 bg-blue-50 p-3 text-xs text-blue-900">
-            Upload the customer or portal tender document to create an internal Jayraj workspace. SteelBid does not submit, publish, or upload anything to an external portal. Extraction remains pending human review.
+            Upload the customer or portal tender document to create an internal workspace for {workspaceName}. SteelBid does not submit, publish, or upload anything to an external portal. Extraction remains pending human review.
           </div>
           <div className="grid gap-3 sm:grid-cols-2">
             <div><Label>Tender number</Label><Input value={intake.number} onChange={e => setIntake(v => ({ ...v, number: e.target.value }))} placeholder="JRS/TND/2026/001" /></div>
@@ -453,7 +456,7 @@ export default function Tenders() {
           </div>
           <div><Label>Original tender PDF or XLSX</Label><Input aria-label="Tender source document" type="file" accept="application/pdf,.pdf,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,.xlsx" onChange={e => { const file = e.target.files?.[0] ?? null; setIntakeFile(file); if (file && !intake.title) setIntake(v => ({ ...v, title: file.name.replace(/\.[^.]+$/, "") })); }} /><p className="mt-1 text-xs text-slate-500">{intakeFile ? `${intakeFile.name} selected` : "No document selected"}</p></div>
           <details className="rounded-lg border border-slate-200 bg-slate-50 p-3"><summary className="cursor-pointer text-sm font-semibold text-slate-800">Add external-source evidence (optional)</summary><p className="mt-2 text-xs text-slate-600">Leave this closed when the document was received directly by Jayraj. Choose a profile only when recording a simulated demonstration or an authorized external source.</p>{tenderSources.isLoading ? <p className="mt-3 text-xs text-slate-600">Loading approved source profiles…</p> : tenderSources.error ? <p className="mt-3 rounded border border-amber-200 bg-amber-50 p-2 text-xs text-amber-900">Source profiles are unavailable. You can still register this document as received directly by Jayraj.</p> : <div className="mt-3 space-y-3"><div><Label>Source profile</Label><Select aria-label="Approved manual source profile" value={intake.sourceId} onChange={e => setIntake(v => ({ ...v, sourceId: e.target.value }))}><option value="">Received directly by Jayraj — no external source record</option>{(tenderSources.data ?? []).filter(source => source.permitted_ingestion_method === "MANUAL_UPLOAD").map(source => <option key={source.id} value={source.id}>{source.name} · {source.data_classification}</option>)}</Select></div>{(tenderSources.data ?? []).find(source => source.id === intake.sourceId)?.data_classification === "AUTHENTIC" && <div className="space-y-3 rounded border bg-white p-3"><p className="text-xs font-semibold text-slate-800">Authorization evidence for authentic external-source intake</p><div><Label>Official source URL</Label><Input type="url" value={intake.officialUrl} onChange={e => setIntake(v => ({ ...v, officialUrl: e.target.value }))} placeholder="https://official-tender-source/..." /></div><div><Label>Authorization / reuse evidence reference</Label><Input value={intake.evidence} onChange={e => setIntake(v => ({ ...v, evidence: e.target.value }))} placeholder="Internal approval or license reference" /></div><div><Label>External tender reference (optional)</Label><Input value={intake.externalReference} onChange={e => setIntake(v => ({ ...v, externalReference: e.target.value }))} placeholder="Portal or issuer tender number" /></div></div>}</div>}</details>
-          <div className="flex justify-end gap-2"><Button variant="outline" disabled={uploadNewTenderMut.isPending} onClick={() => setIntakeOpen(false)}>Cancel</Button><Button loading={uploadNewTenderMut.isPending} disabled={!intakeFile || !intake.number} onClick={() => uploadNewTenderMut.mutate()}>Create Jayraj workspace</Button></div>
+          <div className="flex justify-end gap-2"><Button variant="outline" disabled={uploadNewTenderMut.isPending} onClick={() => setIntakeOpen(false)}>Cancel</Button><Button loading={uploadNewTenderMut.isPending} disabled={!intakeFile || !intake.number} onClick={() => uploadNewTenderMut.mutate()}>Create workspace</Button></div>
         </div>
       </Modal>
     </div>
