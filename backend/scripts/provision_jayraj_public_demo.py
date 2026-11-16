@@ -17,7 +17,7 @@ from app.models.projects import BOQItem, Tender
 from app.seed.demo import get_or_create, uid
 from app.seed.run import NOW, seed_org, seed_org_materials, seed_user
 
-SANDBOX_NAME = "[DEMO] JAYRAJ STEEL TRAINING SANDBOX"
+SANDBOX_NAME = "[DEMO] JAYRAJ STEEL PRIVATE LIMITED — TRAINING WORKSPACE"
 VIEWER_EMAIL = "viewer@jayraj-demo.public"
 
 
