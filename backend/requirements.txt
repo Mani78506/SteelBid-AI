@@ -8,10 +8,8 @@ pydantic-settings==2.7.0
 email-validator==2.2.0
 argon2-cffi==23.1.0
 python-multipart==0.0.20
-# Celery 5.7 brings Kombu 5.7, whose Redis transport requires redis-py 6.1+.
-# Keep the pair explicitly compatible to make Railway builds reproducible.
-celery[redis]==5.7.0
-redis==6.4.0
+celery[redis]==5.4.0
+redis==5.2.1
 httpx==0.28.1
 PyMuPDF==1.25.1
 pdfplumber==0.11.4
