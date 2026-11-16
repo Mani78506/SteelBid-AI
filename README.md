@@ -82,12 +82,12 @@ python -m venv .venv && .venv/Scripts/pip install -r requirements.txt   # Window
 cp .env.example .env          # set DATABASE_URL + DEMO_ADMIN_PASSWORD
 alembic upgrade head
 python -m app.seed.run        # idempotent demo data (requires DEMO_MODE=true)
-uvicorn app.main:app --port 8001
+uvicorn app.main:app --port 8000
 
 # frontend (new terminal)
 cd frontend
 npm install
-npx vite --port 5173          # proxies /api → 127.0.0.1:8001
+npm run dev                   # serves http://127.0.0.1:3000 and proxies /api → 127.0.0.1:8000
 ```
 
 Or with Docker (context is the repo root for both services):

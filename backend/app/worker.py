@@ -112,14 +112,17 @@ def extract_tender_document_task(tender_id: str, document_id: str) -> dict:
     from uuid import UUID
     from app.database import SessionLocal
     from app.models.projects import TenderDocument
-    from app.ai.extraction import extract_text_pages, parse_boq_lines
+    from app.services.tender_document_extraction import TenderExtractionError, extract_and_persist
     db = SessionLocal()
     try:
         doc = db.get(TenderDocument, UUID(document_id))
         if doc is None:
             return {"status": "failed", "error": "document not found"}
-        pages = extract_text_pages(doc.storage_key)
-        candidates = sum(len(parse_boq_lines(text)) for _, text in pages)
-        return {"status": "succeeded", "candidates": candidates}
+        try:
+            return extract_and_persist(db, organization_id=doc.organization_id,
+                                       tender_id=UUID(tender_id), document_id=doc.id,
+                                       created_by=doc.uploaded_by)
+        except TenderExtractionError as exc:
+            return {"status": "FAILED", "error": str(exc)}
     finally:
         db.close()

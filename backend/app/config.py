@@ -1,11 +1,16 @@
 """Environment-validated settings. All configuration flows through here."""
 from functools import lru_cache
-from pydantic import field_validator
+from pydantic import AliasChoices, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+        populate_by_name=True,
+    )
 
     environment: str = "development"  # development | test | production
     database_url: str = "postgresql+psycopg://steelbid:steelbid_dev_password@127.0.0.1:5432/steelbid"
@@ -14,7 +19,9 @@ class Settings(BaseSettings):
 
     session_cookie_name: str = "steelbid_session"
     session_ttl_hours: int = 72
-    secure_cookies: bool = False
+    # Keep COOKIE_SECURE as a backwards-compatible alias for existing local
+    # environment files while exposing the field's canonical name.
+    secure_cookies: bool = Field(default=False, validation_alias=AliasChoices("SECURE_COOKIES", "COOKIE_SECURE"))
     cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
 
     secret_key: str = "dev-only-insecure-secret-change-me"
@@ -24,6 +31,10 @@ class Settings(BaseSettings):
     demo_mode: bool = True
     demo_admin_email: str = "admin@railbuild.demo"
     demo_admin_password: str = "DemoAdmin#2026"
+    # A public visitor may only receive this explicitly read-only, fictional
+    # demonstration identity.  It is intentionally unavailable in production
+    # because production configuration requires DEMO_MODE=false.
+    demo_viewer_email: str = "viewer@apex.demo"
 
     # Pluggable LLM provider: "mock" (deterministic, offline) | "openai-compatible"
     llm_provider: str = "mock"
@@ -47,6 +58,26 @@ class Settings(BaseSettings):
                 if v.startswith(scheme):
                     return "postgresql+psycopg://" + v[len(scheme):]
         return v
+
+    @model_validator(mode="after")
+    def _reject_insecure_production_defaults(self) -> "Settings":
+        """Production must never silently fall back to local demo settings."""
+        if self.environment.lower() != "production":
+            return self
+        problems: list[str] = []
+        if self.database_url == "postgresql+psycopg://steelbid:steelbid_dev_password@127.0.0.1:5432/steelbid":
+            problems.append("DATABASE_URL must be explicitly configured")
+        if self.secret_key == "dev-only-insecure-secret-change-me" or len(self.secret_key) < 32:
+            problems.append("SECRET_KEY must be a non-default value of at least 32 characters")
+        if not self.secure_cookies:
+            problems.append("SECURE_COOKIES must be true")
+        if self.demo_mode:
+            problems.append("DEMO_MODE must be false")
+        if not self.cors_origin_list or any(origin.startswith("http://") for origin in self.cors_origin_list):
+            problems.append("CORS_ORIGINS must contain explicit HTTPS origins")
+        if problems:
+            raise ValueError("Invalid production configuration: " + "; ".join(problems))
+        return self
 
     @property
     def cors_origin_list(self) -> list[str]:

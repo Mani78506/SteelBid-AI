@@ -82,3 +82,26 @@ class PriceAlertUpdate(BaseModel):
     price_threshold: Decimal | None = Field(default=None, gt=0)
     movement_threshold_pct: Decimal | None = Field(default=None, gt=0)
     is_active: bool | None = None
+
+
+class TenderSourceRegistryOut(BaseModel):
+    """Read-only, safe-to-display registry projection; never includes secrets."""
+    id: UUID
+    name: str
+    source_category: str
+    permitted_ingestion_method: str
+    data_classification: str
+    enabled_for_tender_ingestion: bool
+    supports_discovery: bool
+    supports_document_retrieval: bool
+    supports_revision_tracking: bool
+    reference_url: str | None
+    attribution_text: str
+    license_status: str
+    usage_restrictions: str | None
+    publication_frequency: str | None
+    visibility: str
+    redistribution_permitted: bool
+    last_success_at: datetime | None = None
+    last_checked_at: datetime | None = None
+    health_status: str

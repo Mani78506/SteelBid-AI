@@ -10,6 +10,7 @@ interface AuthState {
   role: string | null;
   loading: boolean;
   login: (email: string, password: string) => Promise<void>;
+  startDemo: () => Promise<void>;
   logout: () => Promise<void>;
   switchOrg: (orgId: string) => Promise<void>;
   can: (perm: string) => boolean;
@@ -53,6 +54,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     await post("/v1/auth/login", { email, password });
     await qc.invalidateQueries();
   };
+  const startDemo = async () => {
+    await post("/v1/auth/demo", {});
+    await qc.invalidateQueries();
+    // The route guard must observe the new session before navigation begins.
+    await qc.refetchQueries({ queryKey: ["me"], type: "active" });
+  };
   const logout = async () => {
     await post("/v1/auth/logout");
     qc.clear();
@@ -78,7 +85,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   return (
-    <AuthCtx.Provider value={{ me, orgs, activeOrg, role, loading: meQ.isLoading && !me, login, logout, switchOrg, can }}>
+    <AuthCtx.Provider value={{ me, orgs, activeOrg, role, loading: meQ.isLoading && !me, login, startDemo, logout, switchOrg, can }}>
       {children}
     </AuthCtx.Provider>
   );

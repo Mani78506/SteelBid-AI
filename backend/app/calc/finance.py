@@ -88,3 +88,30 @@ def weighted_average_cost(lots: list[tuple[Decimal, Decimal]]) -> Decimal:
 def inventory_valuation(lots: list[tuple[Decimal, Decimal]]) -> Decimal:
     """Sum of on_hand * unit_cost."""
     return q_money(sum((q * c for q, c in lots), ZERO))
+
+
+def tender_commercials(total_cost: Decimal, *, markup: Decimal | None = None,
+                       target_margin: Decimal | None = None,
+                       proposed_bid: Decimal | None = None) -> dict[str, Decimal]:
+    """Authoritative tender commercial math; exactly one pricing input is required.
+
+    Markup is profit/cost, margin is profit/revenue.  Tax deliberately remains
+    outside this function because no tax rule is implied by a cost estimate.
+    """
+    supplied = sum(x is not None for x in (markup, target_margin, proposed_bid))
+    if supplied != 1:
+        raise ValueError("Provide exactly one of markup, target_margin, or proposed_bid")
+    if total_cost < ZERO:
+        raise ValueError("Total cost cannot be negative")
+    if proposed_bid is None:
+        if markup is not None:
+            if markup < ZERO: raise ValueError("Markup cannot be negative")
+            proposed_bid = q_money(total_cost * (Decimal("1") + markup))
+        else:
+            if target_margin is None or target_margin < ZERO or target_margin >= Decimal("1"):
+                raise ValueError("Target margin must be between 0 and 1")
+            proposed_bid = selling_from_margin(total_cost, target_margin)
+    profit = q_money(proposed_bid - total_cost)
+    return {"proposed_pre_tax_bid": proposed_bid, "projected_profit": profit,
+            "markup": q_ratio(profit / total_cost) if total_cost > ZERO else ZERO,
+            "gross_margin": gross_margin(proposed_bid, total_cost)}

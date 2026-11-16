@@ -12,6 +12,7 @@ const Quotations = lazy(() => import("@/pages/Quotations")); const SalesOrders =
 const Suppliers = lazy(() => import("@/pages/Suppliers")); const Procurement = lazy(() => import("@/pages/Procurement"));
 const Market = lazy(() => import("@/pages/Market")); const Fabrication = lazy(() => import("@/pages/Fabrication"));
 const Projects = lazy(() => import("@/pages/Projects")); const Tenders = lazy(() => import("@/pages/Tenders"));
+const TenderWorkspace = lazy(() => import("@/components/tenders/TenderWorkspace"));
 const Logistics = lazy(() => import("@/pages/Logistics")); const Finance = lazy(() => import("@/pages/Finance"));
 const Audit = lazy(() => import("@/pages/Audit")); const Briefing = lazy(() => import("@/pages/Briefing"));
 const PageFallback = () => <div className="p-6"><Skeleton className="h-8 w-56" /><Skeleton className="mt-4 h-64 w-full" /></div>;
@@ -52,6 +53,7 @@ export default function App() {
           <Route path="/fabrication" element={page(<Fabrication />)} />
           <Route path="/projects" element={page(<Projects />)} />
           <Route path="/tenders" element={page(<Tenders />)} />
+          <Route path="/tenders/:tenderId" element={page(<TenderWorkspace />)} />
           <Route path="/logistics" element={page(<Logistics />)} />
           <Route path="/finance" element={page(<Finance />)} />
           <Route path="/audit" element={page(<Audit />)} />

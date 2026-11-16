@@ -144,6 +144,64 @@ class DashboardSummary(BaseModel):
     recent_activity: list[dict]
 
 
+class InventoryUnitBreakdown(BaseModel):
+    """Quantities for one compatible stock unit only."""
+    unit: str
+    on_hand: DecimalStr
+    eligible: DecimalStr
+    reserved: DecimalStr
+    quality_held: DecimalStr
+    allocated: DecimalStr
+    available: DecimalStr
+
+
+class InventoryBreakdown(BaseModel):
+    """Unit-safe portfolio stock facts.
+
+    The legacy top-level values are the MT view only.  Consumers that need a
+    portfolio view must use ``unit_totals``; a missing MT view is represented
+    by null rather than a fabricated zero.
+    """
+    unit: str | None
+    on_hand: DecimalStr | None
+    eligible: DecimalStr | None
+    reserved: DecimalStr | None
+    quality_held: DecimalStr | None
+    allocated: DecimalStr | None
+    available: DecimalStr | None
+    unit_totals: list[InventoryUnitBreakdown]
+
+
+class ProcurementRequirementSummary(BaseModel):
+    tender_id: str
+    bom_item_id: str
+    requirement_snapshot_id: str | None
+    material_id: str
+    material_name: str | None
+    unit: str
+    required_quantity: DecimalStr
+    eligible_allocated_quantity: DecimalStr
+    remaining_shortage_quantity: DecimalStr
+    compatible_offer_count: int
+    expired_offer_count: int
+    selected_offer_quantity: DecimalStr
+    unfulfilled_quantity: DecimalStr
+    status: str
+    blockers: list[str]
+
+
+class TenderFinancialSummary(BaseModel):
+    tender_id: str
+    tender_number: str
+    official_estimated_value: DecimalStr | None
+    currency: str | None
+    estimate_status: str
+    estimate_id: str | None
+    estimate_total: DecimalStr | None
+    commercial_approval_status: str | None
+    estimate_source: str | None
+
+
 class EnhancedDashboardSummary(BaseModel):
     organization: dict
     kpis: dict
@@ -168,7 +226,7 @@ class EnhancedDashboardSummary(BaseModel):
     bom_readiness: list[dict]  # Material readiness for active work orders
     tender_shortages: list[dict]  # Material shortages linked to tender BOQs
     # NEW: Inventory Intelligence (enhanced)
-    inventory_breakdown: dict  # {on_hand, available, reserved, quality_held}
+    inventory_breakdown: InventoryBreakdown
     atp_by_material: list[dict]  # Available-to-promise for top 5 materials
     # NEW: Tender Costing Intelligence
     active_costing_quotes: list[dict]  # Quotations with pending approval (from tenders)
@@ -177,6 +235,8 @@ class EnhancedDashboardSummary(BaseModel):
     # NEW: Procurement Intelligence (enhanced)
     open_rfqs: dict  # Count of RFQs issued
     pending_quotes: dict  # Count of supplier quotes awaiting review
+    procurement_requirements: list[ProcurementRequirementSummary]
+    tender_financials: list[TenderFinancialSummary]
     delivery_risks: list[dict]  # POs with delivery within 3 days vs actual GRN status
     # NEW: Approvals Queue
     approval_queue: list[dict]  # Consolidated list of pending approvals

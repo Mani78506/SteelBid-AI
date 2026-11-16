@@ -21,7 +21,7 @@ const NAV: NavGroup[] = [
   { title: "Sales", items: [{ to: "/customers", label: "Customers", icon: Users2 }, { to: "/inquiries", label: "Inquiries", icon: ClipboardList }, { to: "/quotations", label: "Quotations", icon: FileText }, { to: "/sales-orders", label: "Sales Orders", icon: ShoppingCart }] },
   { title: "Materials & Stock", items: [{ to: "/materials", label: "Materials", icon: Package }, { to: "/inventory", label: "Inventory", icon: Warehouse }] },
   { title: "Procurement", items: [{ to: "/suppliers", label: "Suppliers", icon: Handshake }, { to: "/procurement", label: "Purchase Requests", icon: ShoppingCart }, { to: "/market", label: "Market Prices", icon: TrendingUp }] },
-  { title: "Operations", items: [{ to: "/fabrication", label: "Fabrication", icon: Factory, profiles: ["FABRICATOR"] }, { to: "/projects", label: "Projects", icon: FolderKanban, profiles: ["CONTRACTOR", "FABRICATOR"] }, { to: "/tenders", label: "Tenders & BOQ", icon: FileText, profiles: ["CONTRACTOR", "FABRICATOR"] }, { to: "/logistics", label: "Logistics", icon: Truck }] },
+  { title: "Operations", items: [{ to: "/fabrication", label: "Fabrication", icon: Factory, profiles: ["FABRICATOR"] }, { to: "/projects", label: "Projects", icon: FolderKanban, profiles: ["CONTRACTOR", "FABRICATOR"] }, { to: "/tenders", label: "Tenders & BOQ", icon: FileText, profiles: ["CONTRACTOR", "FABRICATOR", "TRADER", "DISTRIBUTOR", "MANUFACTURER"] }, { to: "/logistics", label: "Logistics", icon: Truck }] },
   { title: "Finance & Admin", items: [{ to: "/finance", label: "Finance", icon: IndianRupee }, { to: "/audit", label: "Audit Log", icon: ScrollText }] },
 ];
 

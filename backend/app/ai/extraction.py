@@ -9,6 +9,7 @@ is rule-based against a fixed grammar, and any instruction-like text is ignored
 (treated as description content only).
 """
 import re
+from pathlib import Path
 from decimal import Decimal, InvalidOperation
 
 import pdfplumber
@@ -38,11 +39,34 @@ UNIT_NORMALIZE = {"TON": "MT", "TONS": "MT", "TONNE": "MT", "TONNES": "MT",
                   "MT": "MT", "KG": "KG", "SQM": "SQM", "SQ M": "SQM", "SQ.M": "SQM", "M2": "SQM"}
 
 
-def extract_text_pages(pdf_path: str) -> list[tuple[int, str]]:
-    """Return [(page_number, text)]. pdfplumber primary, PyMuPDF fallback."""
+def extract_text_pages(document_path: str) -> list[tuple[int, str]]:
+    """Return numbered text sections from a supported tender document.
+
+    PDF page numbers and XLSX worksheet numbers deliberately share the same
+    return shape.  The caller persists the resulting reference as provenance;
+    it never treats an extracted value as approved.
+    """
+    suffix = Path(document_path).suffix.lower()
+    if suffix == ".xlsx":
+        from openpyxl import load_workbook
+
+        workbook = load_workbook(document_path, read_only=True, data_only=True)
+        pages: list[tuple[int, str]] = []
+        for index, worksheet in enumerate(workbook.worksheets, start=1):
+            rows = []
+            for row in worksheet.iter_rows(values_only=True):
+                values = [str(value).strip() for value in row if value is not None and str(value).strip()]
+                if values:
+                    rows.append(" | ".join(values))
+            pages.append((index, f"Worksheet: {worksheet.title}\n" + "\n".join(rows)))
+        return pages
+    if suffix != ".pdf":
+        raise ValueError("Only PDF and XLSX tender documents can be extracted")
+
+    """PDF: pdfplumber primary, PyMuPDF fallback."""
     pages: list[tuple[int, str]] = []
     try:
-        with pdfplumber.open(pdf_path) as pdf:
+        with pdfplumber.open(document_path) as pdf:
             for i, page in enumerate(pdf.pages, start=1):
                 pages.append((i, page.extract_text() or ""))
         if any(t.strip() for _, t in pages):
@@ -50,7 +74,7 @@ def extract_text_pages(pdf_path: str) -> list[tuple[int, str]]:
     except Exception:
         pages = []
     import fitz  # PyMuPDF fallback
-    doc = fitz.open(pdf_path)
+    doc = fitz.open(document_path)
     return [(i + 1, doc[i].get_text() or "") for i in range(doc.page_count)]
 
 

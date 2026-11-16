@@ -184,13 +184,19 @@ export interface EnhancedDashboardSummary extends DashboardSummary {
   tender_amendments: { id: string; number: string; title: string; status: string; updated_at: string }[];
   boq_review_status: { pending_review: number };
   bom_readiness: { id: string; number: string; status: string; material_readiness: string | null }[];
-  tender_shortages: { tender_id: string; material_id: string | null; required_qty: string | null; available_qty: string; shortage_qty: string }[];
-  inventory_breakdown: { on_hand: string; available: string; reserved: string; quality_held: string; unit: string };
-  atp_by_material: { material_id: string; name: string; available_atp: string }[];
+  tender_shortages: { tender_id: string; bom_item_id?: string; material_id: string | null; required_qty: string | null; eligible_qty?: string; allocated_qty?: string; available_qty?: string; shortage_qty: string; unit?: string; status?: string; reasons?: string[] }[];
+  inventory_breakdown: {
+    unit: string | null; on_hand: string | null; eligible: string | null; reserved: string | null;
+    quality_held: string | null; allocated: string | null; available: string | null;
+    unit_totals: { unit: string; on_hand: string; eligible: string; reserved: string; quality_held: string; allocated: string; available: string }[];
+  };
+  atp_by_material: { material_id: string; name: string; unit: string; available_atp: string }[];
   active_costing_quotes: { id: string; number: string; customer_id: string | null; total_selling: string | null; estimated_cost: string | null; gross_margin_pct: string | null }[];
   margin_exposure: { total_pending_value: string; at_risk_margin: string | null };
   pricing_scenarios: { total_scenarios: number; tender_related: number | null; label?: string };
   open_rfqs: { count: number }; pending_quotes: { count: number };
+  procurement_requirements: { tender_id: string; bom_item_id: string; requirement_snapshot_id: string | null; material_id: string; material_name: string | null; unit: string; required_quantity: string; eligible_allocated_quantity: string; remaining_shortage_quantity: string; compatible_offer_count: number; expired_offer_count: number; selected_offer_quantity: string; unfulfilled_quantity: string; status: string; blockers: string[] }[];
+  tender_financials: { tender_id: string; tender_number: string; official_estimated_value: string | null; currency: string | null; estimate_status: "UNAVAILABLE" | "DRAFT" | "PROVISIONAL" | "AUTHORITATIVE_AWAITING_COMMERCIAL_APPROVAL" | "AUTHORITATIVE_APPROVED" | string; estimate_id: string | null; estimate_total: string | null; commercial_approval_status: string | null; estimate_source: string | null }[];
   delivery_risks: { id: string; number: string; expected_delivery: string; days_late: number; supplier_id: string }[];
   approval_queue: { type: string; id: string; number: string; value: string | null; created_at: string }[];
   price_alerts: { stale_observations: number; stale_threshold_days: number };

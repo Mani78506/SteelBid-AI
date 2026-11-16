@@ -40,9 +40,10 @@ export async function api<T = unknown>(path: string, opts: Opts = {}): Promise<T
   return data as T;
 }
 
-export async function apiUpload<T = unknown>(path: string, file: File, field = "file"): Promise<T> {
+export async function apiUpload<T = unknown>(path: string, file: File, field = "file", fields: Record<string, string | undefined> = {}): Promise<T> {
   const form = new FormData();
   form.append(field, file);
+  Object.entries(fields).forEach(([key, value]) => { if (value !== undefined && value !== "") form.append(key, value); });
   const res = await fetch(`/api${path}`, { method: "POST", credentials: "include", body: form });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {

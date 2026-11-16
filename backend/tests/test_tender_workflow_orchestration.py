@@ -30,6 +30,18 @@ def test_tender_workflow_is_traceable_idempotent_and_tenant_scoped(apex_client, 
     # Repeated click reuses the persisted BOM rather than creating a duplicate.
     assert apex_client.post(f"/api/v1/tenders/{tender_id}/workflow/bom").json()["bom_version_id"] == wf["bom_version_id"]
 
+    # Current persisted shortage becomes one idempotent, internal-only draft requirement.
+    procurement = apex_client.post(f"/api/v1/tenders/{tender_id}/workflow/procurement-requirements")
+    assert procurement.status_code == 201, procurement.text
+    assert procurement.json()["status"] == "DRAFT" and procurement.json()["lines"] == 1
+    assert apex_client.post(f"/api/v1/tenders/{tender_id}/workflow/procurement-requirements").json()["id"] == procurement.json()["id"]
+    requirements = apex_client.get(f"/api/v1/tenders/{tender_id}/workflow/procurement-requirements").json()
+    assert D(requirements["items"][0]["quantity"]) == D("60")
+    supplier = apex_client.get("/api/v1/suppliers?page_size=1").json()["items"][0]
+    rfq = apex_client.post(f"/api/v1/tenders/{tender_id}/workflow/draft-rfqs", json={"supplier_ids": [supplier["id"]]})
+    assert rfq.status_code == 201, rfq.text
+    assert rfq.json()["rfqs"][0]["status"] == "DRAFT"  # never issued or sent automatically
+
     assert apex_client.post(f"/api/v1/tenders/{tender_id}/workflow/customer", json={
         "customer_id": customer["id"]}).status_code == 200
     estimate = apex_client.post(f"/api/v1/tenders/{tender_id}/workflow/estimate", json={

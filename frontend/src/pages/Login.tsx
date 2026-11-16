@@ -4,16 +4,25 @@ import { useAuth } from "@/lib/auth";
 import LoginBackground from "./login/LoginBackground";
 import LoginBranding from "./login/LoginBranding";
 import LoginForm from "./login/LoginForm";
+import DemoWelcome from "./login/DemoWelcome";
 
 export default function Login() {
-  const { login, me } = useAuth();
+  const { login, startDemo, me } = useAuth();
   const navigate = useNavigate();
+  const [showSignIn, setShowSignIn] = React.useState(false);
+  const [demoBusy, setDemoBusy] = React.useState(false);
+  const [demoError, setDemoError] = React.useState<string | null>(null);
 
   React.useEffect(() => { if (me) navigate("/", { replace: true }); }, [me, navigate]);
 
   const submit = async (email: string, password: string) => {
     await login(email, password);
     navigate("/", { replace: true });
+  };
+  const openDemo = async () => {
+    setDemoBusy(true); setDemoError(null);
+    try { await startDemo(); navigate("/", { replace: true }); }
+    catch { setDemoError("The public demonstration is not available on this server. Sign in with your workspace credentials instead."); setDemoBusy(false); }
   };
 
   return (
@@ -40,7 +49,7 @@ export default function Login() {
               <p className="text-[10px] text-slate-400">Steel Business Operating System</p>
             </div>
           </div>
-          <LoginForm onSubmit={submit} />
+          {showSignIn ? <LoginForm onSubmit={submit} /> : <DemoWelcome onExplore={openDemo} onSignIn={() => setShowSignIn(true)} busy={demoBusy} error={demoError} />}
         </div>
       </div>
     </div>

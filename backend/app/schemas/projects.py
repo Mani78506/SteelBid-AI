@@ -75,6 +75,50 @@ class TenderDocumentOut(OrmModel):
     mime_type: str | None
     size_bytes: int | None
     status: str
+    processing_status: str = "PENDING"
+    content_checksum: str | None = None
+    parser_version: str | None = None
+    processed_at: datetime | None = None
+    created_at: datetime
+
+
+class TenderSourceProvenanceOut(OrmModel):
+    id: UUID
+    tender_id: UUID
+    registry_source_id: UUID | None
+    provider_name: str
+    source_type: str
+    official_source_url: str | None
+    external_tender_reference: str | None
+    provider_record_id: str | None
+    authorization_status: str
+    authorization_evidence_reference: str | None
+    data_classification: str
+    first_discovered_at: datetime | None
+    last_retrieved_at: datetime | None
+    last_successfully_checked_at: datetime | None
+    normalized_payload_checksum: str | None
+    source_status: str
+    retrieval_error: str | None
+
+
+class TenderRevisionOut(OrmModel):
+    id: UUID
+    tender_id: UUID
+    source_provenance_id: UUID | None
+    event_type: str
+    detected_at: datetime
+    published_at: datetime | None
+    effective_at: datetime | None
+    previous_value: dict
+    new_value: dict
+    related_document_id: UUID | None
+    document_checksum: str | None
+    evidence_reference: str | None
+    evidence_page_ref: str | None
+    review_status: str
+    acknowledged_by: UUID | None
+    acknowledged_at: datetime | None
     created_at: datetime
 
 

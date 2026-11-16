@@ -14,12 +14,32 @@ from app.models.market import PriceObservation, PriceScenario, PriceSource
 from app.models.materials import OrganizationMaterial
 from app.models.ops import Approval, AuditEvent, Dispatch, Invoice, Payment
 from app.models.procurement import PurchaseOrder, PurchaseRequest, Supplier, SupplierQuote, RFQ
-from app.models.projects import Tender, BOQItem, TenderWorkflow
+from app.models.projects import (Tender, BOQItem, TenderSubmission, TenderWorkflow,
+                                 TenderInventoryAllocation, TenderSupplierSelection,
+                                 TenderRequirementSnapshot)
 from app.models.fabrication import WorkOrder, BOMItem
 from app.models.sales import Quotation, QuotationVersion, SalesOrder
 from app.schemas.ops import DashboardSummary, EnhancedDashboardSummary
+from app.services.tender_costing import compatible_offer
+from app.services.tender_inventory import analyze_bom_item_inventory, unit_safe_inventory_breakdown
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
+
+@router.get("/submission-summary")
+def submission_summary(ctx: TenantContext = Depends(require("read"))):
+    today=datetime.now(timezone.utc)
+    confirmed=ctx.db.scalars(select(TenderSubmission.tender_id).where(TenderSubmission.organization_id==ctx.org_id,TenderSubmission.status=="CONFIRMED")).all()
+    confirmed_tenders=set(confirmed)
+    ready=0
+    for tender in ctx.db.scalars(select(Tender).where(Tender.organization_id==ctx.org_id,Tender.status.in_(["DRAFT","IN_REVIEW","ESTIMATING"]))).all():
+        q=ctx.db.scalar(select(Quotation).where(Quotation.organization_id==ctx.org_id,Quotation.tender_id==tender.id,Quotation.status=="FINALIZED"))
+        if q and (not tender.submission_deadline or tender.submission_deadline>=today): ready+=1
+    drafts=ctx.db.scalars(select(TenderSubmission.tender_id).where(TenderSubmission.organization_id==ctx.org_id,TenderSubmission.status=="DRAFT")).all()
+    deadlines=ctx.db.scalar(select(func.count()).select_from(Tender).where(Tender.organization_id==ctx.org_id,Tender.submission_deadline.isnot(None),Tender.submission_deadline>=today,Tender.submission_deadline<=today+timedelta(days=7),Tender.status.in_(["DRAFT","IN_REVIEW","ESTIMATING"]))) or 0
+    # A correction/resubmission is a DRAFT that needs action even though the
+    # tender has an earlier confirmed submission.  Count unique tenders so
+    # several draft revisions do not inflate the dashboard.
+    return {"ready_for_submission":ready,"upcoming_deadlines":deadlines,"confirmed_submissions":len(confirmed_tenders),"won":ctx.db.scalar(select(func.count()).select_from(Tender).where(Tender.organization_id==ctx.org_id,Tender.status=="WON")) or 0,"lost":ctx.db.scalar(select(func.count()).select_from(Tender).where(Tender.organization_id==ctx.org_id,Tender.status=="LOST")) or 0,"attention":len(set(drafts))}
 
 
 @router.get("/tender-context/{tender_id}")
@@ -43,14 +63,23 @@ def tender_context(tender_id: str, ctx: TenantContext = Depends(require("read"))
         return {"tender_id": str(tender.id), "status": "AWAITING_APPROVED_BOM", "coverage": {},
                 "materials": [], "grade_distribution": [], "unit_totals": boq_totals,
                 "boq_unit_totals": boq_totals, "has_estimate": False}
+    allocations = db.scalars(select(TenderInventoryAllocation).where(
+        TenderInventoryAllocation.organization_id == ctx.org_id,
+        TenderInventoryAllocation.tender_id == tender.id,
+        TenderInventoryAllocation.bom_version_id == workflow.bom_version_id,
+        TenderInventoryAllocation.status == "ACTIVE",
+    )).all()
+    allocated_by_bom: dict[object, Decimal] = {}
+    for allocation in allocations:
+        allocated_by_bom[allocation.bom_item_id] = allocated_by_bom.get(allocation.bom_item_id, ZERO) + Decimal(str(allocation.quantity))
     unit_totals: dict[str, dict[str, Decimal]] = {}
     materials = []
     grades: dict[str, Decimal] = {}
     for item in rows:
-        available = Decimal(str(db.scalar(select(func.coalesce(func.sum(StockLot.on_hand_qty - StockLot.reserved_qty), 0)).where(
-            StockLot.organization_id == ctx.org_id, StockLot.material_id == item.material_id,
-            StockLot.quality_status == "OK")) or 0))
-        required = Decimal(str(item.quantity)); covered = min(required, available); shortage = max(ZERO, required - covered)
+        analysis = analyze_bom_item_inventory(db, ctx.org_id, tender, item)
+        available = Decimal(str(analysis["eligible_quantity"]))
+        allocated = allocated_by_bom.get(item.id, ZERO)
+        required = Decimal(str(item.quantity)); covered = min(required, available + allocated); shortage = max(ZERO, required - covered)
         material = db.get(OrganizationMaterial, item.material_id)
         unit = item.unit
         totals = unit_totals.setdefault(unit, {"required": ZERO, "available": ZERO, "covered": ZERO, "uncovered": ZERO})
@@ -60,7 +89,8 @@ def tender_context(tender_id: str, ctx: TenantContext = Depends(require("read"))
         grades[grade] = grades.get(grade, ZERO) + required
         materials.append({"name": material.name if material else "Unresolved material", "form": material.form if material else None,
                           "grade": grade, "unit": unit, "required": str(required), "available": str(available),
-                          "covered": str(covered), "uncovered": str(shortage)})
+                          "allocated": str(allocated), "covered": str(covered), "uncovered": str(shortage),
+                          "status": analysis["status"], "reasons": analysis.get("reasons", [])})
     coverage = {unit: {**{k: str(v) for k, v in totals.items()},
                        "percent": str((totals["covered"] / totals["required"] * 100) if totals["required"] else ZERO)}
                 for unit, totals in unit_totals.items()}
@@ -69,6 +99,58 @@ def tender_context(tender_id: str, ctx: TenantContext = Depends(require("read"))
             "unit_totals": {u: str(v["required"]) for u, v in unit_totals.items()},
             "has_estimate": bool(workflow and workflow.cost_estimate_id),
             "cost_estimate_id": str(workflow.cost_estimate_id) if workflow and workflow.cost_estimate_id else None}
+
+
+@router.get("/tender-profitability/{tender_id}")
+def tender_profitability(tender_id: str, ctx: TenantContext = Depends(require("read"))):
+    """Saved-estimate view for one tender; never substitutes portfolio figures."""
+    from app.models.ops import CostEstimate, CostLine
+    db = ctx.db
+    tender = db.scalar(select(Tender).where(Tender.id == tender_id, Tender.organization_id == ctx.org_id))
+    if tender is None: raise not_found("Tender")
+    workflow = db.scalar(select(TenderWorkflow).where(TenderWorkflow.tender_id == tender.id, TenderWorkflow.organization_id == ctx.org_id))
+    authoritative = db.scalar(select(CostEstimate).where(CostEstimate.tender_id == tender.id, CostEstimate.organization_id == ctx.org_id, CostEstimate.context["calculation_version"].astext == "AUTHORITATIVE_TENDER_V1").order_by(CostEstimate.version.desc()).limit(1))
+    if not workflow or (not workflow.cost_estimate_id and authoritative is None):
+        return {"tender_id": str(tender.id), "has_estimate": False, "is_training": tender.is_demo,
+                "tender_number": tender.number, "message": "No saved estimate exists for this tender."}
+    estimate = authoritative or db.scalar(select(CostEstimate).where(CostEstimate.id == workflow.cost_estimate_id, CostEstimate.organization_id == ctx.org_id))
+    if estimate is None: raise not_found("Cost estimate")
+    lines = db.scalars(select(CostLine).where(CostLine.cost_estimate_id == estimate.id)).all()
+    breakdown: dict[str, Decimal] = {}
+    for line in lines: breakdown[line.category] = breakdown.get(line.category, ZERO) + Decimal(str(line.amount))
+    is_authoritative = authoritative is not None
+    quote = db.scalar(select(Quotation).where(Quotation.id == workflow.quotation_id, Quotation.organization_id == ctx.org_id)) if workflow.quotation_id and not is_authoritative else None
+    version = db.scalar(select(QuotationVersion).where(QuotationVersion.quotation_id == quote.id).order_by(QuotationVersion.version_no.desc())) if quote else None
+    cost = Decimal(str(estimate.total_cost)); commercial=(estimate.context or {}).get("commercial",{}) if is_authoritative else {}
+    revenue = Decimal(str(commercial.get("proposed_pre_tax_bid", "0"))) if is_authoritative else (Decimal(str(version.total_selling_price)) if version else ZERO)
+    profit = Decimal(str(commercial.get("projected_profit", "0"))) if is_authoritative else (revenue - cost if version else ZERO)
+    approval = db.scalar(select(Approval).where(Approval.organization_id == ctx.org_id,
+        Approval.entity_type == "authoritative_estimate", Approval.entity_id == estimate.id).order_by(Approval.created_at.desc()).limit(1)) if is_authoritative else None
+    return {"tender_id": str(tender.id), "tender_number": tender.number, "has_estimate": True, "is_training": tender.is_demo,
+            "estimate_id": str(estimate.id), "estimate_status": estimate.status, "estimate_source": "AUTHORITATIVE" if is_authoritative else "DEMO_COMMERCIAL_RATE", "estimate_version": estimate.version, "currency": estimate.currency,
+            "commercial_approval_status": approval.status if approval else None,
+            "material_cost": str(estimate.material_cost), "additional_costs": str(cost - Decimal(str(estimate.material_cost))), "total_cost": str(cost),
+            "breakdown": [{"category": category, "amount": str(amount)} for category, amount in breakdown.items()],
+            "proposed_pre_tax_bid_value": str(revenue) if (version or is_authoritative) else None, "quotation_total": str(revenue) if version else None,
+            "tax": "0", "tax_status": "NOT_RECORDED", "projected_profit": str(profit) if (version or is_authoritative) else None,
+            "markup_pct": commercial.get("markup") if is_authoritative else (str(profit / cost) if version and cost else None),
+            "gross_margin_pct": commercial.get("gross_margin") if is_authoritative else (str(profit / revenue) if version and revenue else None)}
+
+
+@router.get("/commercial-approval-summary")
+def commercial_approval_summary(ctx: TenantContext = Depends(require("read"))):
+    """Tenant-scoped counts for persisted authoritative estimate decisions only."""
+    from app.models.ops import CostEstimate
+    rows = ctx.db.execute(select(Approval.status, func.count(Approval.id)).join(
+        CostEstimate, CostEstimate.id == Approval.entity_id).where(
+        Approval.organization_id == ctx.org_id,
+        Approval.entity_type == "authoritative_estimate",
+        CostEstimate.organization_id == ctx.org_id,
+        CostEstimate.context["calculation_version"].astext == "AUTHORITATIVE_TENDER_V1"
+    ).group_by(Approval.status)).all()
+    counts = {status: int(count) for status, count in rows}
+    return {"pending_review": counts.get("PENDING", 0), "approved": counts.get("APPROVED", 0),
+            "rejected": counts.get("REJECTED", 0), "returned": counts.get("RETURNED", 0)}
 
 
 @router.get("/summary", response_model=DashboardSummary)
@@ -437,53 +519,77 @@ def enhanced_summary(days: int = Query(30, ge=1, le=365), ctx: TenantContext = D
             "material_readiness": f"{ready_count}/{total_count} items ready"
         })
 
-    # Portfolio shortage KPI: approved tender BOMs only, tenant-scoped and unit-safe.
-    # Draft BOQs remain visible in the tender workspace but are not misrepresented as procurement commitments.
+    # Portfolio shortage KPI: approved tender BOMs only.  Use the same
+    # eligibility service as the tender workspace; no dashboard-specific
+    # grade/specification/unit shortcut is permitted here.
     tender_shortages = []
-    for tender_id, bom_version_id in db.execute(select(Tender.id, TenderWorkflow.bom_version_id).join(
+    active_tender_workflows = db.execute(select(Tender, TenderWorkflow.bom_version_id).join(
         TenderWorkflow, (TenderWorkflow.tender_id == Tender.id) & (TenderWorkflow.organization_id == Tender.organization_id)).where(
         Tender.organization_id == org,
-        Tender.status.in_(["DRAFT", "IN_REVIEW", "ESTIMATING"]), TenderWorkflow.bom_version_id.isnot(None))).all():
+        Tender.status.in_(["DRAFT", "IN_REVIEW", "ESTIMATING"]), TenderWorkflow.bom_version_id.isnot(None))).all()
+    active_allocations = db.scalars(select(TenderInventoryAllocation).where(
+        TenderInventoryAllocation.organization_id == org,
+        TenderInventoryAllocation.status == "ACTIVE",
+    )).all()
+    allocation_by_bom: dict[object, Decimal] = {}
+    for allocation in active_allocations:
+        allocation_by_bom[allocation.bom_item_id] = allocation_by_bom.get(allocation.bom_item_id, ZERO) + Decimal(str(allocation.quantity))
+    for tender, bom_version_id in active_tender_workflows:
         for bi in db.scalars(select(BOMItem).where(BOMItem.bom_version_id == bom_version_id,
-                                                    BOMItem.organization_id == org,
-                                                    BOMItem.unit == "MT")).all():
-            from app.services.inventory import material_availability
-            avail = material_availability(None, db, org, bi.material_id)
-            if avail["available"] < bi.quantity:
-                shortage = bi.quantity - avail["available"]
+                                                    BOMItem.organization_id == org)).all():
+            analysis = analyze_bom_item_inventory(db, org, tender, bi)
+            eligible = Decimal(str(analysis["eligible_quantity"]))
+            allocated = allocation_by_bom.get(bi.id, ZERO)
+            shortage = max(ZERO, Decimal(str(bi.quantity)) - eligible - allocated)
+            if shortage > ZERO:
                 tender_shortages.append({
-                    "tender_id": str(tender_id),
+                    "tender_id": str(tender.id),
+                    "bom_item_id": str(bi.id),
                     "material_id": str(bi.material_id),
                     "required_qty": str(bi.quantity),
-                    "available_qty": str(avail["available"]),
-                    "shortage_qty": str(shortage)
+                    "eligible_qty": str(eligible),
+                    "allocated_qty": str(allocated),
+                    "shortage_qty": str(shortage),
+                    "unit": bi.unit,
+                    "status": analysis["status"],
+                    "reasons": analysis.get("reasons", []),
                 })
 
     # ---- Inventory Intelligence (enhanced) ----
     lots = db.scalars(select(StockLot).where(StockLot.organization_id == org)).all()
-    on_hand = sum(l.on_hand_qty for l in lots)
-    available = sum(l.on_hand_qty - l.reserved_qty for l in lots)
-    reserved = sum(l.reserved_qty for l in lots)
-    quality_held = sum(l.on_hand_qty for l in lots if l.quality_status == "QUARANTINED")
+    inventory_by_unit = unit_safe_inventory_breakdown(lots, active_allocations)
+    unit_totals = [
+        {"unit": unit, **{key: str(value) for key, value in values.items()}}
+        for unit, values in sorted(inventory_by_unit.items())
+    ]
+    # Legacy fields remain present for existing MT consumers.  They are null
+    # when no MT inventory exists; other units are exposed only in unit_totals.
+    mt = inventory_by_unit.get("MT")
     inventory_breakdown = {
-        "on_hand": str(on_hand), "available": str(available),
-        "reserved": str(reserved), "quality_held": str(quality_held),
-        "unit": "MT"
+        "on_hand": str(mt["on_hand"]) if mt else None,
+        "eligible": str(mt["eligible"]) if mt else None,
+        "reserved": str(mt["reserved"]) if mt else None,
+        "quality_held": str(mt["quality_held"]) if mt else None,
+        "allocated": str(mt["allocated"]) if mt else None,
+        "available": str(mt["available"]) if mt else None,
+        "unit": "MT" if mt else None,
+        "unit_totals": unit_totals,
     }
 
     # ATP for top 5 materials
     atp_by_material = []
     top_materials = db.execute(
-        select(OrganizationMaterial.id, OrganizationMaterial.name,
+        select(OrganizationMaterial.id, OrganizationMaterial.name, OrganizationMaterial.base_unit,
                func.coalesce(func.sum(StockLot.on_hand_qty - StockLot.reserved_qty), 0))
         .join(StockLot, (StockLot.material_id == OrganizationMaterial.id)
-              & (StockLot.quality_status == "OK"), isouter=True)
+              & (StockLot.quality_status == "OK")
+              & (StockLot.unit == OrganizationMaterial.base_unit), isouter=True)
         .where(OrganizationMaterial.organization_id == org, OrganizationMaterial.is_active.is_(True))
         .group_by(OrganizationMaterial.id)
         .order_by(func.coalesce(func.sum(StockLot.on_hand_qty - StockLot.reserved_qty), 0).desc())
         .limit(5)).all()
-    for mat_id, mat_name, avail in top_materials:
-        atp_by_material.append({"material_id": str(mat_id), "name": mat_name, "available_atp": str(avail or 0)})
+    for mat_id, mat_name, unit, avail in top_materials:
+        atp_by_material.append({"material_id": str(mat_id), "name": mat_name, "unit": unit, "available_atp": str(avail or 0)})
 
     # ---- Tender Costing Intelligence ----
     # Active costing quotes (pending approval, can be from tenders or regular inquiries)
@@ -536,6 +642,123 @@ def enhanced_summary(days: int = Query(30, ge=1, le=365), ctx: TenantContext = D
     pending_quotes = db.scalar(select(func.count()).select_from(SupplierQuote).where(
         SupplierQuote.organization_id == org,
         SupplierQuote.status == "OPEN")) or 0
+
+    # Material-level procurement view.  It deliberately uses the same BOM
+    # eligibility analysis and persisted tender selections as the workspace.
+    # Draft RFQs are not represented as transmitted: only ISSUED RFQs are
+    # counted by ``open_rfqs`` above.
+    procurement_requirements = []
+    active_bom_ids = [bom_version_id for _, bom_version_id in active_tender_workflows]
+    dashboard_boms = db.scalars(select(BOMItem).where(
+        BOMItem.organization_id == org, BOMItem.bom_version_id.in_(active_bom_ids)
+    )).all() if active_bom_ids else []
+    tender_by_bom_version = {bom_version_id: tender for tender, bom_version_id in active_tender_workflows}
+    snapshot_ids = {bom.tender_requirement_snapshot_id for bom in dashboard_boms if bom.tender_requirement_snapshot_id}
+    snapshots = {snapshot.id: snapshot for snapshot in db.scalars(select(TenderRequirementSnapshot).where(
+        TenderRequirementSnapshot.organization_id == org,
+        TenderRequirementSnapshot.id.in_(snapshot_ids),
+    )).all()} if snapshot_ids else {}
+    material_ids = {bom.material_id for bom in dashboard_boms}
+    materials = {material.id: material for material in db.scalars(select(OrganizationMaterial).where(
+        OrganizationMaterial.organization_id == org, OrganizationMaterial.id.in_(material_ids),
+    )).all()} if material_ids else {}
+    quotes_by_material: dict[object, list[SupplierQuote]] = {}
+    if material_ids:
+        for quote in db.scalars(select(SupplierQuote).where(
+            SupplierQuote.organization_id == org, SupplierQuote.material_id.in_(material_ids)
+        )).all():
+            quotes_by_material.setdefault(quote.material_id, []).append(quote)
+    selections_by_snapshot: dict[object, Decimal] = {}
+    for selection in db.scalars(select(TenderSupplierSelection).where(
+        TenderSupplierSelection.organization_id == org,
+        TenderSupplierSelection.status == "SELECTED",
+        TenderSupplierSelection.tender_id.in_([tender.id for tender, _ in active_tender_workflows]),
+    )).all() if active_tender_workflows else []:
+        selections_by_snapshot[selection.tender_requirement_snapshot_id] = selections_by_snapshot.get(
+            selection.tender_requirement_snapshot_id, ZERO) + Decimal(str(selection.selected_qty))
+    for bom in dashboard_boms:
+        tender = tender_by_bom_version[bom.bom_version_id]
+        snapshot = snapshots.get(bom.tender_requirement_snapshot_id)
+        material = materials.get(bom.material_id)
+        analysis = analyze_bom_item_inventory(db, org, tender, bom)
+        allocated = allocation_by_bom.get(bom.id, ZERO)
+        selected = selections_by_snapshot.get(bom.tender_requirement_snapshot_id, ZERO)
+        required = Decimal(str(bom.quantity))
+        shortage = max(ZERO, required - allocated - selected)
+        compatible_offers = expired_offers = 0
+        blockers = list(analysis.get("reasons", []))
+        if snapshot is None or material is None:
+            blockers.append("approved requirement or mapped material is unavailable")
+        else:
+            for quote in quotes_by_material.get(bom.material_id, []):
+                quote_material = materials.get(quote.material_id)
+                if quote.valid_until and quote.valid_until < today:
+                    expired_offers += 1
+                    continue
+                offer_check = compatible_offer(
+                    snapshot, material, quote, quote_material,
+                    Decimal(str(analysis["eligible_quantity"])),
+                ) if quote_material else {"compatible": False}
+                if offer_check["compatible"]:
+                    compatible_offers += 1
+            if shortage > ZERO and compatible_offers == 0:
+                blockers.append("no valid compatible supplier offer recorded")
+        status = "BLOCKED" if blockers else ("FULFILLED" if shortage == ZERO else "SHORTAGE")
+        procurement_requirements.append({
+            "tender_id": str(tender.id), "bom_item_id": str(bom.id),
+            "requirement_snapshot_id": str(bom.tender_requirement_snapshot_id) if bom.tender_requirement_snapshot_id else None,
+            "material_id": str(bom.material_id), "material_name": material.name if material else None,
+            "unit": bom.unit, "required_quantity": str(required),
+            "eligible_allocated_quantity": str(allocated),
+            "remaining_shortage_quantity": str(shortage),
+            "compatible_offer_count": compatible_offers, "expired_offer_count": expired_offers,
+            "selected_offer_quantity": str(selected), "unfulfilled_quantity": str(shortage),
+            "status": status, "blockers": blockers,
+        })
+
+    # Portfolio financial facts preserve unknown values as null.  A zero is
+    # returned only when it is a persisted Decimal zero on an actual estimate.
+    from app.models.ops import CostEstimate
+    tender_financials = []
+    tender_ids = [tender.id for tender, _ in active_tender_workflows]
+    estimates_by_tender: dict[object, list[CostEstimate]] = {}
+    if tender_ids:
+        for estimate in db.scalars(select(CostEstimate).where(
+            CostEstimate.organization_id == org, CostEstimate.tender_id.in_(tender_ids)
+        ).order_by(CostEstimate.version.desc())).all():
+            estimates_by_tender.setdefault(estimate.tender_id, []).append(estimate)
+    estimate_ids = [estimate.id for estimates in estimates_by_tender.values() for estimate in estimates]
+    approvals_by_estimate: dict[object, Approval] = {}
+    if estimate_ids:
+        for approval in db.scalars(select(Approval).where(
+            Approval.organization_id == org, Approval.entity_type == "authoritative_estimate",
+            Approval.entity_id.in_(estimate_ids),
+        ).order_by(Approval.created_at.desc())).all():
+            approvals_by_estimate.setdefault(approval.entity_id, approval)
+    for tender, _ in active_tender_workflows:
+        estimates = estimates_by_tender.get(tender.id, [])
+        authoritative = next((estimate for estimate in estimates if (estimate.context or {}).get("calculation_version") == "AUTHORITATIVE_TENDER_V1"), None)
+        estimate = authoritative or (estimates[0] if estimates else None)
+        approval = approvals_by_estimate.get(estimate.id) if authoritative else None
+        if estimate is None:
+            status, source = "UNAVAILABLE", None
+        elif authoritative and approval and approval.status == "APPROVED":
+            status, source = "AUTHORITATIVE_APPROVED", "AUTHORITATIVE_TENDER_V1"
+        elif authoritative:
+            status, source = "AUTHORITATIVE_AWAITING_COMMERCIAL_APPROVAL", "AUTHORITATIVE_TENDER_V1"
+        elif estimate.status == "DRAFT":
+            status, source = "DRAFT", "SAVED_ESTIMATE"
+        else:
+            status, source = "PROVISIONAL", "SAVED_ESTIMATE"
+        tender_financials.append({
+            "tender_id": str(tender.id), "tender_number": tender.number,
+            "official_estimated_value": str(tender.estimated_value) if tender.estimated_value is not None else None,
+            "currency": estimate.currency if estimate else tender.currency,
+            "estimate_status": status, "estimate_id": str(estimate.id) if estimate else None,
+            "estimate_total": str(estimate.total_cost) if estimate else None,
+            "commercial_approval_status": approval.status if approval else None,
+            "estimate_source": source,
+        })
 
     # Delivery risks: POs with delivery within 3 days but no GRN
     delivery_risks = []
@@ -611,6 +834,8 @@ def enhanced_summary(days: int = Query(30, ge=1, le=365), ctx: TenantContext = D
         pricing_scenarios=pricing_scenarios,
         open_rfqs={"count": open_rfqs},
         pending_quotes={"count": pending_quotes},
+        procurement_requirements=procurement_requirements,
+        tender_financials=tender_financials,
         delivery_risks=delivery_risks,
         approval_queue=approval_queue,
         price_alerts=price_alerts

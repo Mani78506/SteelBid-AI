@@ -2,6 +2,13 @@
 @tailwind components;
 @tailwind utilities;
 
+/* A sidebar changes the available dashboard width.  These KPI cards reflow
+   before their compact values need to shrink or truncate. */
+[aria-label="Command Center priorities"] {
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+}
+
+
 html { scrollbar-gutter: stable; }
 body { @apply bg-background text-foreground antialiased; }
 * { @apply border-border; }

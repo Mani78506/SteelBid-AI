@@ -27,10 +27,10 @@ def create_app() -> FastAPI:
 
     from app.api import (ai, audit, auth, customers, dashboard, fabrication, finance, notifications,
                          inventory, logistics, market, materials, procurement, projects,
-                         quotations, sales_orders, tenders)
+                         quotations, sales_orders, tenders, tender_sources)
     for module in (auth, dashboard, customers, quotations, sales_orders, materials, market,
                    procurement, inventory, fabrication, projects, tenders, logistics,
-                   finance, ai, audit, notifications):
+                   finance, ai, audit, notifications, tender_sources):
         app.include_router(module.router, prefix="/api/v1")
 
     @app.get("/api/health", tags=["system"])

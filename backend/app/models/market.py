@@ -57,6 +57,32 @@ class MarketSourceProviderConfig(Base, UUIDPKMixin, TimestampMixin):
     refresh_interval_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=3600)
 
 
+class TenderSourceProfile(Base, UUIDPKMixin, TimestampMixin):
+    """Tender-discovery policy attached to one reviewed source.
+
+    ``MarketSource`` remains the canonical location for source identity, legal
+    terms, attribution, visibility and redistribution policy.  This profile
+    adds only tender-specific policy and intentionally starts disabled.
+    """
+    __tablename__ = "tender_source_profiles"
+    __table_args__ = (
+        UniqueConstraint("source_id", name="uq_tender_source_profile_source"),
+        CheckConstraint("source_category IN ('CPPP','IREPS','GEM','STATE_EPROCUREMENT','MANUAL_UPLOAD','OTHER')", name="ck_tender_source_profile_category"),
+        CheckConstraint("permitted_ingestion_method IN ('MANUAL_UPLOAD','OFFICIAL_API','LICENSED_FEED','OFFICIAL_DOCUMENT','FIXTURE_TEST')", name="ck_tender_source_profile_ingestion"),
+        CheckConstraint("default_data_classification IN ('AUTHENTIC','DEMO','FIXTURE_TEST')", name="ck_tender_source_profile_classification"),
+    )
+    source_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("market_sources.id", ondelete="CASCADE"), nullable=False, index=True)
+    source_category: Mapped[str] = mapped_column(String(32), nullable=False)
+    permitted_ingestion_method: Mapped[str] = mapped_column(String(32), nullable=False)
+    supports_discovery: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    supports_document_retrieval: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    supports_revision_tracking: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    default_data_classification: Mapped[str] = mapped_column(String(32), nullable=False)
+    enabled_for_tender_ingestion: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, index=True)
+    authorization_evidence_reference: Mapped[str | None] = mapped_column(String(1024))
+    notes: Mapped[str | None] = mapped_column(String(2000))
+
+
 class MarketImportBatch(Base, UUIDPKMixin, TimestampMixin):
     __tablename__ = "market_import_batches"
     __table_args__ = (

@@ -8,6 +8,7 @@ from app.core.deps import (clear_session_cookie, get_current_session, get_tenant
                            session_expiry, set_session_cookie)
 from app.core.errors import ApiError, not_found
 from app.core.security import hash_token, new_session_token, verify_password
+from app.config import get_settings
 from app.database import get_db
 from app.models.identity import Membership, Organization, Session, User
 from app.schemas.auth import LoginIn, MeOut, SwitchOrgIn
@@ -16,14 +17,9 @@ from app.schemas.common import MembershipOut, OrganizationOut, UserOut
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 
-@router.post("/login")
-def login(body: LoginIn, request: Request, response: Response, db: OrmSession = Depends(get_db)):
-    user = db.scalar(select(User).where(User.email == body.email.lower()))
-    if user is None or not user.is_active or not verify_password(body.password, user.password_hash):
-        # uniform failure — do not reveal which part failed
-        raise ApiError(401, "INVALID_CREDENTIALS", "Invalid email or password")
+def _start_session(user: User, request: Request, response: Response, db: OrmSession):
+    """Create a session for an already-authorized identity."""
     token = new_session_token()
-    # default active org = first membership
     first_org = db.scalar(
         select(Membership.organization_id).where(Membership.user_id == user.id).limit(1))
     sess = Session(
@@ -34,6 +30,35 @@ def login(body: LoginIn, request: Request, response: Response, db: OrmSession = 
     db.commit()
     set_session_cookie(response, token)
     return {"ok": True, "user": UserOut.model_validate(user).model_dump(mode="json")}
+
+
+@router.post("/login")
+def login(body: LoginIn, request: Request, response: Response, db: OrmSession = Depends(get_db)):
+    user = db.scalar(select(User).where(User.email == body.email.lower()))
+    if user is None or not user.is_active or not verify_password(body.password, user.password_hash):
+        # uniform failure — do not reveal which part failed
+        raise ApiError(401, "INVALID_CREDENTIALS", "Invalid email or password")
+    return _start_session(user, request, response, db)
+
+
+@router.post("/demo")
+def start_public_demo(request: Request, response: Response, db: OrmSession = Depends(get_db)):
+    """Enter the fictional showcase with the persisted VIEWER identity only.
+
+    This endpoint deliberately does not exist outside demo mode.  It never
+    authenticates an administrator, never accepts an organization id, and the
+    resulting role remains subject to the normal server-side permission checks.
+    """
+    settings = get_settings()
+    if not settings.demo_mode or settings.is_production:
+        raise not_found("Demo")
+    user = db.scalar(select(User).where(User.email == settings.demo_viewer_email.lower()))
+    if user is None or not user.is_active:
+        raise not_found("Demo")
+    membership = db.scalar(select(Membership).where(Membership.user_id == user.id))
+    if membership is None or membership.role != "VIEWER":
+        raise not_found("Demo")
+    return _start_session(user, request, response, db)
 
 
 @router.post("/logout", status_code=204)

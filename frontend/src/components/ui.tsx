@@ -106,6 +106,7 @@ export function Skeleton({ className }: { className?: string }) {
 export function Modal({ open, onClose, title, children, wide }: {
   open: boolean; onClose: () => void; title: string; children: React.ReactNode; wide?: boolean;
 }) {
+  const titleId = React.useId();
   React.useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
     if (open) window.addEventListener("keydown", onKey);
@@ -117,12 +118,12 @@ export function Modal({ open, onClose, title, children, wide }: {
         <motion.div className="fixed inset-0 z-50 flex items-center justify-center p-4"
           initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
           <div className="absolute inset-0 bg-slate-900/45" onClick={onClose} />
-          <motion.div role="dialog" aria-modal="true"
+          <motion.div role="dialog" aria-modal="true" aria-labelledby={titleId}
             className={cn("relative w-full rounded-lg bg-card shadow-xl", wide ? "max-w-4xl" : "max-w-lg")}
             initial={{ opacity: 0, y: 12, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 8, scale: 0.98 }} transition={{ duration: 0.16 }}>
             <div className="flex items-center justify-between border-b border-border px-5 py-3">
-              <h2 className="text-sm font-semibold">{title}</h2>
+              <h2 id={titleId} className="text-sm font-semibold">{title}</h2>
               <button onClick={onClose} className="rounded p-1 hover:bg-muted" aria-label="Close"><X className="h-4 w-4" /></button>
             </div>
             <div className="max-h-[78vh] overflow-y-auto p-5">{children}</div>
