@@ -32,7 +32,10 @@ FORM_PATTERNS = [
 ]
 GRADE_PATTERN = re.compile(r"\b(E\d{3}[A-Z]{0,3}|FE\s?\d{3}[A-Z]{0,2}|ASTM\s?A\d+|S\s?\d{3}[A-Z]{0,3})\b", re.I)
 STANDARD_PATTERN = re.compile(r"\bIS\s?\d{3,5}\b", re.I)
-QTY_PATTERN = re.compile(r"(\d[\d,]*(?:\.\d+)?)\s*(MT|KG|TON(?:NE)?S?|NOS?|PCS|SQ\.?\s*M(?:TR)?|SQM|M2)\b", re.I)
+# PDF table extractors commonly insert a visual column delimiter between a
+# quantity and its unit (for example ``24.000 | MT``).  Treat that delimiter
+# as layout, not part of the business value.
+QTY_PATTERN = re.compile(r"(\d[\d,]*(?:\.\d+)?)\s*(?:\|\s*)?(MT|KG|TON(?:NE)?S?|NOS?|PCS|SQ\.?\s*M(?:TR)?|SQM|M2)\b", re.I)
 DIM_PATTERN = re.compile(r"(\d+(?:\.\d+)?\s?(?:mm|x\s?\d+(?:\.\d+)?\s?mm)+)", re.I)
 UNIT_NORMALIZE = {"TON": "MT", "TONS": "MT", "TONNE": "MT", "TONNES": "MT",
                   "NO": "NOS", "NOS": "NOS", "PC": "NOS", "PCS": "NOS",

@@ -22,7 +22,7 @@ from app.models.materials import OrganizationMaterial
 from app.models.ops import AIJob
 from app.models.projects import BOQItem, ExtractionEvidence, Tender, TenderDocument
 
-PARSER_VERSION = "rule-based-boq-v1"
+PARSER_VERSION = "rule-based-boq-v2"
 SUPPORTED_SUFFIXES = {".pdf", ".xlsx"}
 
 
@@ -130,6 +130,11 @@ def extract_and_persist(db: Session, *, organization_id: UUID, tender_id: UUID, 
                 ))
                 warnings += bool(injection_warnings)
                 total += 1
+        if total == 0:
+            raise TenderExtractionError(
+                "No reviewable BOQ lines were found. Use a text-searchable PDF or XLSX, "
+                "or re-upload a clearer document; no BOQ records were created."
+            )
         document.status = "EXTRACTED"
         document.processing_status = "COMPLETED_WITH_WARNINGS" if warnings else "COMPLETED"
         document.processed_at = datetime.now(timezone.utc)
