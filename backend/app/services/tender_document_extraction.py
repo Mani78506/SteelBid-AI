@@ -16,13 +16,13 @@ from uuid import UUID
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
-from app.ai.extraction import detect_injection_warnings, extract_text_pages, parse_boq_lines
+from app.ai.extraction import detect_injection_warnings, extract_boq_candidates, extract_text_pages
 from app.config import get_settings
 from app.models.materials import OrganizationMaterial
 from app.models.ops import AIJob
 from app.models.projects import BOQItem, ExtractionEvidence, Tender, TenderDocument
 
-PARSER_VERSION = "rule-based-boq-v2"
+PARSER_VERSION = "document-ai-boq-v1"
 SUPPORTED_SUFFIXES = {".pdf", ".xlsx"}
 
 
@@ -99,9 +99,12 @@ def extract_and_persist(db: Session, *, organization_id: UUID, tender_id: UUID, 
 
         total = 0
         warnings = 0
+        extraction_methods: set[str] = set()
         for page_no, text in extract_text_pages(path):
             injection_warnings = detect_injection_warnings(text)
-            for candidate in parse_boq_lines(text):
+            candidates, method, extraction_warnings = extract_boq_candidates(text)
+            extraction_methods.add(method)
+            for candidate in candidates:
                 material_id = None
                 if candidate["form"] and candidate["grade"]:
                     material = db.scalar(select(OrganizationMaterial).where(
@@ -126,9 +129,13 @@ def extract_and_persist(db: Session, *, organization_id: UUID, tender_id: UUID, 
                                       "form": candidate["form"], "grade": candidate["grade"],
                                       "boq_item_id": str(boq.id), "parser_version": PARSER_VERSION},
                     confidence=Decimal(candidate["confidence"]), review_status="PENDING",
-                    warnings={"injection": injection_warnings} if injection_warnings else {},
+                    warnings={key: value for key, value in {
+                        "injection": injection_warnings or None,
+                        "extraction": extraction_warnings or candidate.get("warnings") or None,
+                        "method": method,
+                    }.items() if value is not None},
                 ))
-                warnings += bool(injection_warnings)
+                warnings += bool(injection_warnings or extraction_warnings or candidate.get("warnings"))
                 total += 1
         if total == 0:
             raise TenderExtractionError(
@@ -139,7 +146,8 @@ def extract_and_persist(db: Session, *, organization_id: UUID, tender_id: UUID, 
         document.processing_status = "COMPLETED_WITH_WARNINGS" if warnings else "COMPLETED"
         document.processed_at = datetime.now(timezone.utc)
         job.status = "SUCCEEDED"
-        job.output = {"candidates": total, "parser_version": PARSER_VERSION, "checksum": checksum, "warnings": warnings}
+        job.output = {"candidates": total, "parser_version": PARSER_VERSION, "checksum": checksum,
+                      "warnings": warnings, "extraction_methods": sorted(extraction_methods)}
         job.completed_at = document.processed_at
         db.commit()
         return {"job_id": str(job.id), "status": job.status, "candidates": total, "idempotent": False}

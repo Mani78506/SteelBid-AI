@@ -13,6 +13,9 @@ celery_app = Celery("steelbid", broker=settings.redis_url, backend=settings.redi
 celery_app.conf.update(
     task_always_eager=settings.celery_always_eager,
     task_eager_propagates=False,
+    # Celery 6 no longer inherits this behavior from broker_connection_retry.
+    # Keep startup resilient while Railway brings the managed Redis service up.
+    broker_connection_retry_on_startup=True,
     timezone="UTC",
     beat_schedule={"market-source-dispatch": {"task": "steelbid.dispatch_due_market_sources", "schedule": 60.0}},
 )

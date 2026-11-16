@@ -27,7 +27,7 @@ def test_shared_service_persists_pending_boq_and_page_evidence(monkeypatch, tmp_
     monkeypatch.setattr(service, "_source_path", lambda _doc: str(source))
     monkeypatch.setattr(service, "_latest_job", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(service, "extract_text_pages", lambda _path: [(3, "ISMB 200 E250 12 MT")])
-    monkeypatch.setattr(service, "parse_boq_lines", lambda _text: [{"raw_description":"ISMB 200 E250 12 MT", "form":"BEAM", "grade":"E250", "specification":{}, "quantity":"12", "unit":"MT", "confidence":"0.65"}])
+    monkeypatch.setattr(service, "extract_boq_candidates", lambda _text: ([{"raw_description":"ISMB 200 E250 12 MT", "form":"BEAM", "grade":"E250", "specification":{}, "quantity":"12", "unit":"MT", "confidence":"0.65"}], "rule-based", []))
     # No tenant material was mapped: it must remain pending rather than auto-approved.
     result=service.extract_and_persist(db, organization_id=org_id, tender_id=tender_id, document_id=document.id)
     assert result["candidates"] == 1 and result["idempotent"] is False
