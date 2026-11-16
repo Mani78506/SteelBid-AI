@@ -44,8 +44,8 @@ railway variables --service api \
   --set "ENVIRONMENT=production" \
   --set "SECURE_COOKIES=true" \
   --set "CELERY_ALWAYS_EAGER=false" \
-  --set "DEMO_MODE=true" \
-  --set "DEMO_ADMIN_PASSWORD=<demo-password>"
+  --set "DEMO_MODE=false" \
+  --set "CORS_ORIGINS=https://<web-service-domain>.up.railway.app"
 
 # worker (same image, different command)
 railway add --service worker
@@ -57,35 +57,44 @@ railway variables --service worker \
   --set "REDIS_URL=\${{Redis.REDIS_URL}}" \
   --set "SECRET_KEY=<same-secret>" \
   --set "ENVIRONMENT=production" \
-  --set "CELERY_ALWAYS_EAGER=false"
+  --set "SECURE_COOKIES=true" \
+  --set "CORS_ORIGINS=https://<web-service-domain>.up.railway.app" \
+  --set "CELERY_ALWAYS_EAGER=false" \
+  --set "DEMO_MODE=false" \
+  --set "SERVICE_ROLE=worker"
 
 # web service — nginx proxies /api/* to the api service's private domain
 railway add --service web
 railway up --service web                   # builds frontend/Dockerfile
 railway variables --service web \
   --set "API_UPSTREAM=http://api.railway.internal:8000"
-#   then set api's CORS to the web public domain:
-railway variables --service api \
-  --set "CORS_ORIGINS=https://<web-service-domain>.up.railway.app"
+#   API CORS is set to the web public domain above.
 ```
 
 **Option B — GitHub (push repo, then in the Railway dashboard):**
 
 1. Push this repo to GitHub, create a project, add **PostgreSQL** + **Redis** plugins.
-2. Create three services from the repo — `api` (`backend/Dockerfile`, pinned by `railway.toml`), `worker` (same Dockerfile, custom start command `celery -A app.worker:celery_app worker -l info`), `web` (`frontend/Dockerfile`).
+2. Create three services from the repo. In each service's Railway **Settings → Build**, set its **Config File Path** so configuration stays service-specific:
+   - `api`: `/backend/railway.api.toml`
+   - `worker`: `/backend/railway.worker.toml`
+   - `web`: `/frontend/railway.web.toml`
+   This prevents the API Dockerfile and API HTTP health check from being applied to the worker or web service.
 3. Set the same env vars listed in Option A on each service.
 4. Deploy — migrations run automatically on api boot.
 
 **Either way, afterwards:**
 
-- Seed demo data once: `railway run --service api -- python -m app.seed.run`
-  (requires `DEMO_MODE=true`; the seed refuses to run in real production).
+- Keep `DEMO_MODE=false` in production. Production demo records must be deliberately
+  created through the approved, labelled application workflow; automatic seeding is
+  intentionally blocked.
 - Health checks: `GET /api/health` (liveness), `GET /api/health/ready` (DB+redis readiness).
 - Enable private networking on all services so `api.railway.internal` resolves.
 
 ## Seeding policy
 
-`DEMO_MODE` must be `true` (default); the seed refuses to run when `DEMO_MODE=false` to run `python -m app.seed.run`. The seed is deterministic + idempotent; all demo orgs are prefixed `[DEMO]`.
+`DEMO_MODE` must remain `false` in production. The seed command intentionally refuses
+to run there. Use a non-production environment for seeded demo fixtures; all fixture
+organizations must remain explicitly labelled `[DEMO]`.
 
 ## Demo credentials
 

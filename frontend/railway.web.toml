@@ -1,0 +1,12 @@
+# Railway configuration for the Vite/nginx web service only.
+# Configure the web service's config file path as /frontend/railway.web.toml.
+
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "frontend/Dockerfile"
+
+[deploy]
+healthcheckPath = "/"
+healthcheckTimeout = 60
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 3
