@@ -682,7 +682,7 @@ def seed_jayraj_training_tenders(db, admin: User, org: Organization,
     """
     get_or_create(
         db, Customer, organization_id=org.id, code="DEMO-JRS-CUSTOMER",
-        defaults=dict(id=uid(f"{fixture_key}:customer"), name="[TRAINING] Warehouse Project Customer",
+        defaults=dict(id=uid(f"{fixture_key}:training-customer"), name="[TRAINING] Warehouse Project Customer",
                       category="SIMULATED TRAINING", credit_terms_days=0, is_active=True, is_demo=True))
     tender_specs = [
         ("DEMO-JRS-WH-001", "[TRAINING TENDER] Structural Steel Supply for Industrial Warehouse", "INDUSTRIAL", "Hyderabad", 8,
