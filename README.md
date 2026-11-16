@@ -124,7 +124,7 @@ Covered: auth, tenant isolation (cross-org ID guessing → 404), role enforcemen
 
 Two methods (full steps in `docs/deployment.md`):
 
-- **CLI**: `railway init` → add Postgres + Redis → `railway add -s api|worker|web` → `railway up -s <svc>` (repo root). Each service sets `RAILWAY_DOCKERFILE_PATH` (`backend/Dockerfile` ×2, `frontend/Dockerfile`).
+- **CLI**: `railway init` → add Postgres + Redis → `railway add -s api|worker|web` → `railway up -s <svc>` (repo root). Each service sets `RAILWAY_DOCKERFILE_PATH` (`backend/Dockerfile` ×2, `frontend/Dockerfile`) and uses its matching service config under `backend/` or `frontend/`.
 - **GitHub**: push this repo → create services in the dashboard with the same Dockerfile paths.
 
 Key env vars — api: `DATABASE_URL`, `REDIS_URL`, `SECRET_KEY`, `ENVIRONMENT=production`, `SECURE_COOKIES=true`, `CELERY_ALWAYS_EAGER=false`, `CORS_ORIGINS=<web domain>`; worker: same minus CORS + `SERVICE_ROLE=worker`; web: `API_UPSTREAM=https://<api domain>`.

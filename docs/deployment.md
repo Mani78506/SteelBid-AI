@@ -79,6 +79,7 @@ railway variables --service web \
    - `worker`: `/backend/railway.worker.toml`
    - `web`: `/frontend/railway.web.toml`
    This prevents the API Dockerfile and API HTTP health check from being applied to the worker or web service.
+   Also set `RAILWAY_DOCKERFILE_PATH` as a service variable: `backend/Dockerfile` for API and worker, and `frontend/Dockerfile` for web. No repository-root `railway.toml` is used because it would override all three service configurations.
 3. Set the same env vars listed in Option A on each service.
 4. Deploy — migrations run automatically on api boot.
 
