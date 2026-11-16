@@ -672,7 +672,8 @@ def seed_jayraj_workspace(db) -> Organization:
     return org
 
 
-def seed_jayraj_training_tenders(db, admin: User, org: Organization) -> None:
+def seed_jayraj_training_tenders(db, admin: User, org: Organization,
+                                 fixture_key: str = "jayraj-training") -> None:
     """Add reversible, explicitly simulated training opportunities to Jayraj only.
 
     These records intentionally contain no source URL, supplier quotation, inventory or
@@ -681,7 +682,7 @@ def seed_jayraj_training_tenders(db, admin: User, org: Organization) -> None:
     """
     get_or_create(
         db, Customer, organization_id=org.id, code="DEMO-JRS-CUSTOMER",
-        defaults=dict(id=uid("jayraj-training-customer"), name="[TRAINING] Warehouse Project Customer",
+        defaults=dict(id=uid(f"{fixture_key}:customer"), name="[TRAINING] Warehouse Project Customer",
                       category="SIMULATED TRAINING", credit_terms_days=0, is_active=True, is_demo=True))
     tender_specs = [
         ("DEMO-JRS-WH-001", "[TRAINING TENDER] Structural Steel Supply for Industrial Warehouse", "INDUSTRIAL", "Hyderabad", 8,
@@ -700,7 +701,7 @@ def seed_jayraj_training_tenders(db, admin: User, org: Organization) -> None:
     for number, title, project_type, location, due_in, description in tender_specs:
         tender, created = get_or_create(
             db, Tender, organization_id=org.id, number=number,
-            defaults=dict(id=uid(f"jayraj-training-tender:{number}"), title=title,
+            defaults=dict(id=uid(f"{fixture_key}:tender:{number}"), title=title,
                           customer="Training scenario — no external issuer", project_type=project_type,
                           location=location, submission_deadline=NOW + timedelta(days=due_in),
                           description=description, status="DRAFT", is_demo=True,
@@ -731,7 +732,7 @@ def seed_jayraj_training_tenders(db, admin: User, org: Organization) -> None:
         sku = f"JRS-TRAIN-{index:02d}"
         material, _ = get_or_create(
             db, OrganizationMaterial, organization_id=org.id, sku=sku,
-            defaults=dict(id=uid(f"jayraj-training-material:{sku}"), name=name, form=form,
+            defaults=dict(id=uid(f"{fixture_key}:material:{sku}"), name=name, form=form,
                           grade=grade, standard=standard, base_unit=unit,
                           specification={"dimensions": dimensions, "data_classification": "SIMULATED",
                                          "usage": "Training tender mapping only"}, is_active=True))
@@ -739,7 +740,7 @@ def seed_jayraj_training_tenders(db, admin: User, org: Organization) -> None:
 
     # Dedicated simulated warehouse: training stock never alters an operational Jayraj lot.
     training_wh, _ = get_or_create(db, Warehouse, organization_id=org.id, code="JRS-TRAINING",
-        defaults=dict(id=uid("jayraj-training-warehouse"), name="[TRAINING] Tender Demo Warehouse",
+        defaults=dict(id=uid(f"{fixture_key}:warehouse"), name="[TRAINING] Tender Demo Warehouse",
                       location="Simulated training location", is_active=True))
     training_stock = [("JRS-TRAIN-01", "10", "MT", "28000"), ("JRS-TRAIN-02", "5", "MT", "27500"),
         ("JRS-TRAIN-03", "3", "MT", "29000"), ("JRS-TRAIN-04", "6", "MT", "31000"),
@@ -748,15 +749,15 @@ def seed_jayraj_training_tenders(db, admin: User, org: Organization) -> None:
     for sku, quantity, unit, unit_cost in training_stock:
         lot, created = get_or_create(db, StockLot, organization_id=org.id, material_id=materials[sku].id,
             warehouse_id=training_wh.id, lot_number=f"TRAINING-{sku}", defaults=dict(
-                id=uid(f"jayraj-training-lot:{sku}"), heat_number="SIMULATED", quality_status="OK",
+                id=uid(f"{fixture_key}:lot:{sku}"), heat_number="SIMULATED", quality_status="OK",
                 on_hand_qty=Decimal(quantity), reserved_qty=Decimal("0"), unit=unit, unit_cost=Decimal(unit_cost),
                 source={"classification":"TRAINING","simulated":True,"reference":"JRS-TRAINING-RECEIPT"}))
         if created:
-            db.add(InventoryMovement(id=uid(f"jayraj-training-receipt:{sku}"), organization_id=org.id,
+            db.add(InventoryMovement(id=uid(f"{fixture_key}:receipt:{sku}"), organization_id=org.id,
                 material_id=materials[sku].id, warehouse_id=training_wh.id, stock_lot_id=lot.id,
                 movement_type="RECEIPT", quantity=Decimal(quantity), unit=unit,
                 balance_after_on_hand=Decimal(quantity), reference={"classification":"TRAINING","simulated":True},
-                idempotency_key=f"seed:jayraj-training-receipt:{sku}"))
+                idempotency_key=f"seed:{fixture_key}:receipt:{sku}"))
 
     warehouse = db.scalar(select(Tender).where(Tender.organization_id == org.id,
                                                 Tender.number == "DEMO-JRS-WH-001"))
@@ -773,7 +774,7 @@ def seed_jayraj_training_tenders(db, admin: User, org: Organization) -> None:
     for line_no, raw, form, grade, sku, quantity, unit, dimensions in lines:
         get_or_create(
             db, BOQItem, tender_id=warehouse.id, organization_id=org.id, line_no=line_no,
-            defaults=dict(id=uid(f"jayraj-training-boq:{line_no}"), raw_description=raw, form=form, grade=grade,
+            defaults=dict(id=uid(f"{fixture_key}:boq:{line_no}"), raw_description=raw, form=form, grade=grade,
                           specification={"standard": next(m.standard for key, m in materials.items() if key == sku),
                                          "dimensions": dimensions, "data_classification": "SIMULATED"},
                           quantity=Decimal(quantity), unit=unit, material_id=materials[sku].id,

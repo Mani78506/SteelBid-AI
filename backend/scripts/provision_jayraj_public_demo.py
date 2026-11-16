@@ -15,7 +15,7 @@ from app.database import SessionLocal
 from app.models.crm import Customer
 from app.models.projects import BOQItem, Tender
 from app.seed.demo import get_or_create, uid
-from app.seed.run import NOW, seed_org, seed_org_materials, seed_user
+from app.seed.run import NOW, seed_jayraj_training_tenders, seed_org, seed_org_materials, seed_user
 
 SANDBOX_NAME = "[DEMO] JAYRAJ STEEL PRIVATE LIMITED — TRAINING WORKSPACE"
 VIEWER_EMAIL = "viewer@jayraj-demo.public"
@@ -36,6 +36,9 @@ def main() -> int:
                        profiles=["TRADER", "DISTRIBUTOR", "CONTRACTOR"], is_demo=True)
         viewer = seed_user(db, VIEWER_EMAIL, "Public Demo Viewer — Jayraj Training", [(org, "VIEWER")])
         seed_org_materials(db, org, "JRS-DEMO")
+        # Reuse the local Jayraj training fixture with a sandbox-specific key so
+        # every UUID and inventory movement remains separate from real Jayraj.
+        seed_jayraj_training_tenders(db, viewer, org, fixture_key="jayraj-public-demo")
         customer, _ = get_or_create(db, Customer, organization_id=org.id, code="JRS-DEMO-CUSTOMER",
             defaults={"id": uid("jayraj-public-demo:customer"), "name": "[DEMO] Industrial Warehouse Customer",
                       "category": "SIMULATED TRAINING", "credit_terms_days": 0, "is_active": True, "is_demo": True})
