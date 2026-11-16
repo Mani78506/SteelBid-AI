@@ -57,8 +57,6 @@ railway variables --service worker \
   --set "REDIS_URL=\${{Redis.REDIS_URL}}" \
   --set "SECRET_KEY=<same-secret>" \
   --set "ENVIRONMENT=production" \
-  --set "SECURE_COOKIES=true" \
-  --set "CORS_ORIGINS=https://<web-service-domain>.up.railway.app" \
   --set "CELERY_ALWAYS_EAGER=false" \
   --set "DEMO_MODE=false" \
   --set "SERVICE_ROLE=worker"

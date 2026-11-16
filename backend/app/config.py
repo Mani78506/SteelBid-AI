@@ -16,6 +16,9 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+psycopg://steelbid:steelbid_dev_password@127.0.0.1:5432/steelbid"
     redis_url: str = "redis://127.0.0.1:6379/0"
     celery_always_eager: bool = True  # local dev default; deployment sets False
+    # API instances serve browser traffic; worker instances only process jobs.
+    # Railway sets this to "worker" for the Celery service via SERVICE_ROLE.
+    service_role: str = "api"
 
     session_cookie_name: str = "steelbid_session"
     session_ttl_hours: int = 72
@@ -69,12 +72,15 @@ class Settings(BaseSettings):
             problems.append("DATABASE_URL must be explicitly configured")
         if self.secret_key == "dev-only-insecure-secret-change-me" or len(self.secret_key) < 32:
             problems.append("SECRET_KEY must be a non-default value of at least 32 characters")
-        if not self.secure_cookies:
-            problems.append("SECURE_COOKIES must be true")
         if self.demo_mode:
             problems.append("DEMO_MODE must be false")
-        if not self.cors_origin_list or any(origin.startswith("http://") for origin in self.cors_origin_list):
-            problems.append("CORS_ORIGINS must contain explicit HTTPS origins")
+        # Cookie and CORS requirements apply only to the HTTP service. A Celery
+        # worker neither emits cookies nor accepts browser requests.
+        if self.service_role.lower() != "worker":
+            if not self.secure_cookies:
+                problems.append("SECURE_COOKIES must be true")
+            if not self.cors_origin_list or any(origin.startswith("http://") for origin in self.cors_origin_list):
+                problems.append("CORS_ORIGINS must contain explicit HTTPS origins")
         if problems:
             raise ValueError("Invalid production configuration: " + "; ".join(problems))
         return self

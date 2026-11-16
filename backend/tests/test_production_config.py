@@ -24,3 +24,12 @@ def test_production_settings_reject_insecure_defaults():
 def test_production_settings_accepts_explicit_secure_values():
     settings = _production_settings()
     assert settings.is_production and settings.secure_cookies and not settings.demo_mode
+
+
+def test_production_worker_does_not_require_browser_only_settings():
+    settings = _production_settings(
+        service_role="worker",
+        secure_cookies=False,
+        cors_origins="http://localhost:5173",
+    )
+    assert settings.is_production and settings.service_role == "worker"
