@@ -34,9 +34,9 @@ class Settings(BaseSettings):
     demo_mode: bool = True
     demo_admin_email: str = "admin@railbuild.demo"
     demo_admin_password: str = "DemoAdmin#2026"
-    # A public visitor may only receive this explicitly read-only, fictional
-    # demonstration identity.  It is intentionally unavailable in production
-    # because production configuration requires DEMO_MODE=false.
+    # Public viewing is independently opt-in.  It never enables seeding or
+    # write-capable demo users, and production still requires DEMO_MODE=false.
+    public_demo_enabled: bool = False
     demo_viewer_email: str = "viewer@apex.demo"
 
     # Pluggable LLM provider: "mock" (deterministic, offline) | "openai-compatible"

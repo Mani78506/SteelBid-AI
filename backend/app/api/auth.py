@@ -17,10 +17,11 @@ from app.schemas.common import MembershipOut, OrganizationOut, UserOut
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 
-def _start_session(user: User, request: Request, response: Response, db: OrmSession):
+def _start_session(user: User, request: Request, response: Response, db: OrmSession,
+                   organization_id=None):
     """Create a session for an already-authorized identity."""
     token = new_session_token()
-    first_org = db.scalar(
+    first_org = organization_id or db.scalar(
         select(Membership.organization_id).where(Membership.user_id == user.id).limit(1))
     sess = Session(
         token_hash=hash_token(token), user_id=user.id, active_organization_id=first_org,
@@ -45,20 +46,26 @@ def login(body: LoginIn, request: Request, response: Response, db: OrmSession = 
 def start_public_demo(request: Request, response: Response, db: OrmSession = Depends(get_db)):
     """Enter the fictional showcase with the persisted VIEWER identity only.
 
-    This endpoint deliberately does not exist outside demo mode.  It never
-    authenticates an administrator, never accepts an organization id, and the
-    resulting role remains subject to the normal server-side permission checks.
+    Production access is explicitly opt-in through PUBLIC_DEMO_ENABLED. It never
+    enables seeding, authenticates an administrator, accepts an organization id,
+    or grants anything beyond a persisted fictional VIEWER membership.
     """
     settings = get_settings()
-    if not settings.demo_mode or settings.is_production:
+    enabled = settings.public_demo_enabled or (settings.demo_mode and not settings.is_production)
+    if not enabled:
         raise not_found("Demo")
     user = db.scalar(select(User).where(User.email == settings.demo_viewer_email.lower()))
-    if user is None or not user.is_active:
+    if user is None or not user.is_active or not user.is_demo:
         raise not_found("Demo")
-    membership = db.scalar(select(Membership).where(Membership.user_id == user.id))
-    if membership is None or membership.role != "VIEWER":
+    membership = db.scalar(
+        select(Membership)
+        .join(Organization, Organization.id == Membership.organization_id)
+        .where(Membership.user_id == user.id, Membership.role == "VIEWER",
+               Organization.is_active.is_(True), Organization.is_demo.is_(True))
+        .limit(1))
+    if membership is None:
         raise not_found("Demo")
-    return _start_session(user, request, response, db)
+    return _start_session(user, request, response, db, organization_id=membership.organization_id)
 
 
 @router.post("/logout", status_code=204)

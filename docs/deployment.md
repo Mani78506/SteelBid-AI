@@ -45,6 +45,7 @@ railway variables --service api \
   --set "SECURE_COOKIES=true" \
   --set "CELERY_ALWAYS_EAGER=false" \
   --set "DEMO_MODE=false" \
+  --set "PUBLIC_DEMO_ENABLED=true" \
   --set "CORS_ORIGINS=https://<web-service-domain>.up.railway.app"
 
 # worker (same image, different command)
@@ -86,6 +87,9 @@ railway variables --service web \
 - Keep `DEMO_MODE=false` in production. Production demo records must be deliberately
   created through the approved, labelled application workflow; automatic seeding is
   intentionally blocked.
+- To expose an already-provisioned fictional `VIEWER` identity on the public landing
+  page, set `PUBLIC_DEMO_ENABLED=true`. This never enables seeding, admin access, or
+  write permissions. It remains unavailable if that labelled viewer record is absent.
 - Health checks: `GET /api/health` (liveness), `GET /api/health/ready` (DB+redis readiness).
 - Enable private networking on all services so `api.railway.internal` resolves.
 

@@ -33,3 +33,9 @@ def test_production_worker_does_not_require_browser_only_settings():
         cors_origins="http://localhost:5173",
     )
     assert settings.is_production and settings.service_role == "worker"
+
+
+def test_public_demo_can_be_explicitly_enabled_without_enabling_seed_mode():
+    settings = _production_settings(public_demo_enabled=True)
+    assert settings.public_demo_enabled is True
+    assert settings.demo_mode is False
