@@ -37,6 +37,7 @@ class Settings(BaseSettings):
     # Public viewing is independently opt-in.  It never enables seeding or
     # write-capable demo users, and production still requires DEMO_MODE=false.
     public_demo_enabled: bool = False
+    public_demo_viewer_email: str = "viewer@apex.demo"
     demo_viewer_email: str = "viewer@apex.demo"
 
     # Pluggable LLM provider: "mock" (deterministic, offline) | "openai-compatible"

@@ -54,7 +54,8 @@ def start_public_demo(request: Request, response: Response, db: OrmSession = Dep
     enabled = settings.public_demo_enabled or (settings.demo_mode and not settings.is_production)
     if not enabled:
         raise not_found("Demo")
-    user = db.scalar(select(User).where(User.email == settings.demo_viewer_email.lower()))
+    viewer_email = settings.public_demo_viewer_email if settings.is_production else settings.demo_viewer_email
+    user = db.scalar(select(User).where(User.email == viewer_email.lower()))
     if user is None or not user.is_active or not user.is_demo:
         raise not_found("Demo")
     membership = db.scalar(

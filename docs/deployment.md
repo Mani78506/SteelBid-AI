@@ -46,6 +46,7 @@ railway variables --service api \
   --set "CELERY_ALWAYS_EAGER=false" \
   --set "DEMO_MODE=false" \
   --set "PUBLIC_DEMO_ENABLED=true" \
+  --set "PUBLIC_DEMO_VIEWER_EMAIL=viewer@jayraj-demo.public" \
   --set "CORS_ORIGINS=https://<web-service-domain>.up.railway.app"
 
 # worker (same image, different command)

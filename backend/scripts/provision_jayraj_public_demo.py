@@ -27,7 +27,7 @@ def main() -> int:
     settings = get_settings()
     if not settings.is_production or not settings.public_demo_enabled:
         raise SystemExit("Refused: requires production with PUBLIC_DEMO_ENABLED=true")
-    if settings.demo_viewer_email.lower() != VIEWER_EMAIL:
+    if settings.public_demo_viewer_email.lower() != VIEWER_EMAIL:
         raise SystemExit("Refused: PUBLIC_DEMO_VIEWER_EMAIL must target the sandbox viewer")
 
     db = SessionLocal()
