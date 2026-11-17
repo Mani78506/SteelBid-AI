@@ -7,12 +7,13 @@ from app.services import tender_document_extraction as service
 
 
 class FakeSession:
-    def __init__(self): self.added=[]; self.commits=0
+    def __init__(self, materials=None): self.added=[]; self.commits=0; self.materials=materials or []
     def add(self, row): self.added.append(row)
     def flush(self): pass
     def commit(self): self.commits += 1
     def execute(self, _statement): pass
     def scalar(self, _statement): return None
+    def scalars(self, _statement): return SimpleNamespace(all=lambda: self.materials)
 
 
 def _document():
@@ -49,3 +50,19 @@ def test_completed_document_is_idempotent_without_new_rows(monkeypatch, tmp_path
     monkeypatch.setattr(service, "_latest_job", lambda *_args, **_kwargs: job)
     result=service.extract_and_persist(db, organization_id=uuid4(), tender_id=uuid4(), document_id=document.id)
     assert result["idempotent"] is True and result["candidates"] == 0 and not db.added
+
+
+def test_auto_mapping_skips_an_incompatible_lookalike_for_an_exact_material(monkeypatch, tmp_path):
+    document = _document(); tender_id=uuid4(); org_id=uuid4()
+    wrong = SimpleNamespace(id=uuid4(), form="BEAM", grade="E250", base_unit="MT", standard="IS 2062", specification={"dimensions": "200 mm"})
+    exact = SimpleNamespace(id=uuid4(), form="BEAM", grade="E250", base_unit="MT", standard="IS 2062", specification={"dimensions": "300 mm"})
+    db = FakeSession([wrong, exact])
+    source = tmp_path / "source.pdf"; source.write_bytes(b"%PDF-test")
+    monkeypatch.setattr(service, "_load", lambda *_args, **_kwargs: (SimpleNamespace(), document))
+    monkeypatch.setattr(service, "_source_path", lambda _doc: str(source))
+    monkeypatch.setattr(service, "_latest_job", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(service, "extract_text_pages", lambda _path: [(1, "ISMB 300 E250 12 MT")])
+    monkeypatch.setattr(service, "extract_boq_candidates", lambda _text: ([{"raw_description":"ISMB 300 E250 12 MT", "form":"BEAM", "grade":"E250", "specification":{"standard":"IS 2062", "dimensions":"300 mm"}, "quantity":"12", "unit":"MT", "confidence":"0.65"}], "rule-based", []))
+    service.extract_and_persist(db, organization_id=org_id, tender_id=tender_id, document_id=document.id)
+    boq = next(row for row in db.added if row.__class__.__name__ == "BOQItem")
+    assert boq.material_id == exact.id

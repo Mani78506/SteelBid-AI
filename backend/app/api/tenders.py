@@ -1635,11 +1635,29 @@ def review_boq_item(tender_id: UUID, item_id: UUID, body: BOQReviewIn,
                                             BOQItem.organization_id == ctx.org_id))
     if b is None:
         raise not_found("BOQ item")
+    material = None
     if body.material_id:
-        m = ctx.db.get(OrganizationMaterial, body.material_id)
-        if m is None or m.organization_id != ctx.org_id:
+        material = ctx.db.get(OrganizationMaterial, body.material_id)
+        if material is None or material.organization_id != ctx.org_id:
             raise not_found("Material")
-        b.material_id = body.material_id
+    # Confirming a line is the business boundary for a BOM requirement.  Check
+    # the selected tenant material here, rather than allowing an invalid
+    # mapping to survive until snapshot/BOM generation.
+    selected_material = material
+    if selected_material is None and b.material_id:
+        selected_material = ctx.db.get(OrganizationMaterial, b.material_id)
+    if body.review_status == "CONFIRMED":
+        if selected_material is None:
+            raise bad_request("UNRESOLVED_MATERIAL", "Select a compatible material before confirming this BOQ line")
+        reasons = mapping_compatibility(selected_material, b)
+        if reasons:
+            raise bad_request(
+                "INCOMPATIBLE_BOQ_MAPPING",
+                "Selected material does not match this BOQ requirement",
+                {"boq_item_id": str(b.id), "reasons": reasons},
+            )
+    if material is not None:
+        b.material_id = material.id
     if body.quantity is not None:
         b.quantity = body.quantity
     before = b.review_status

@@ -24,7 +24,7 @@ from app.models.ops import AIJob
 from app.models.projects import BOQItem, ExtractionEvidence, Tender, TenderDocument
 from app.services.tender_inventory import mapping_compatibility
 
-PARSER_VERSION = "document-ai-boq-v2"
+PARSER_VERSION = "document-ai-boq-v3"
 SUPPORTED_SUFFIXES = {".pdf", ".xlsx"}
 
 
@@ -109,19 +109,20 @@ def extract_and_persist(db: Session, *, organization_id: UUID, tender_id: UUID, 
             for candidate in candidates:
                 material_id = None
                 if candidate["form"] and candidate["grade"]:
-                    material = db.scalar(select(OrganizationMaterial).where(
+                    materials = db.scalars(select(OrganizationMaterial).where(
                         OrganizationMaterial.organization_id == organization_id,
                         OrganizationMaterial.form == candidate["form"],
                         OrganizationMaterial.grade == candidate["grade"],
                         OrganizationMaterial.base_unit == candidate["unit"],
-                    ).limit(1))
+                    )).all()
                     requirement = SimpleNamespace(form=candidate["form"], grade=candidate["grade"],
                                                   unit=candidate["unit"], specification=candidate["specification"])
                     # Form/grade alone is never enough: an ISMB 300 must not be
                     # silently mapped to an ISMB 200, for example.  Leave the
                     # candidate unmapped for human review when compatibility is
                     # not exact under the same rule used by BOM/inventory.
-                    material_id = material.id if material and not mapping_compatibility(material, requirement) else None
+                    material_id = next((material.id for material in materials
+                                        if not mapping_compatibility(material, requirement)), None)
                 boq = BOQItem(
                     organization_id=organization_id, tender_id=tender_id, tender_document_id=document.id,
                     line_no=str(total + 1), raw_description=candidate["raw_description"], form=candidate["form"],
