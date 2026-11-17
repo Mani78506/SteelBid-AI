@@ -5,6 +5,7 @@ import { api, apiUpload, get, post, type Page } from "@/lib/api";
 import { Badge, Button, Card, CardContent, ErrorState, Input, Select, Skeleton } from "@/components/ui";
 import { fmtDate } from "@/lib/format";
 import { useToast } from "@/components/Toast";
+import { useAuth } from "@/lib/auth";
 
 type Doc = { id:string; file_name:string; size_bytes:number|null; status:string; created_at:string };
 type Evidence = { id:string; document_id:string; page:number|null; raw_value:string; confidence:string|null };
@@ -13,10 +14,12 @@ type Material = { id:string; name:string; base_unit:string };
 const keys=["workspace-documents","workspace-boq","workspace-evidence","tender-workflow","workspace-inventory-match"];
 const spec=(value:Record<string,unknown>)=>[value.standard,value.dimensions].filter(Boolean).map(String).join(" · ");
 
+const editableQty=(value:string|null)=>{if(value===null||value==="")return "";const numeric=Number(value);return Number.isFinite(numeric)?String(numeric):value;};
 function Metric({label,value,tone}:{label:string;value:string|number;tone:"amber"|"emerald"|"slate"}) { const colors={amber:"border-amber-200 bg-amber-50 text-amber-800",emerald:"border-emerald-200 bg-emerald-50 text-emerald-800",slate:"border-slate-200 bg-white text-slate-700"}; return <div className={`rounded-lg border px-3 py-2 ${colors[tone]}`}><span className="text-[10px] font-bold uppercase tracking-wide">{label}</span><b className="ml-2 text-lg">{value}</b></div>; }
 
 export function TenderDocumentsRequirements({ tenderId, section }: { tenderId:string; section:"documents"|"requirements" }) {
-  const qc=useQueryClient(), toast=useToast(), fileRef=React.useRef<HTMLInputElement>(null);
+  const qc=useQueryClient(), toast=useToast(), fileRef=React.useRef<HTMLInputElement>(null), {can}=useAuth();
+  const canReview=can("tenders.write"), canBuild=can("fabrication.write");
   const [draftQty,setDraftQty]=React.useState<Record<string,string>>({}); const [draftMaterial,setDraftMaterial]=React.useState<Record<string,string>>({});
   const invalidate=()=>keys.forEach(key=>qc.invalidateQueries({queryKey:[key,tenderId]}));
   const docs=useQuery({queryKey:["workspace-documents",tenderId],queryFn:()=>get<Doc[]>(`/v1/tenders/${tenderId}/documents`)});
@@ -26,9 +29,10 @@ export function TenderDocumentsRequirements({ tenderId, section }: { tenderId:st
   const materials=useQuery({queryKey:["workspace-materials"],queryFn:()=>get<Page<Material>>("/v1/materials?page_size=100")});
   const upload=useMutation({mutationFn:(file:File)=>apiUpload<Doc>(`/v1/tenders/${tenderId}/documents`,file),onSuccess:()=>{toast.push("success","Tender source uploaded. AI extraction is queued.");invalidate()},onError:(e)=>toast.push("error",e instanceof Error?e.message:"Upload failed")});
   const extract=useMutation({mutationFn:(id:string)=>post<{candidates:number}>(`/v1/tenders/${tenderId}/documents/${id}/extract`),onSuccess:(r)=>{toast.push("success",`${r.candidates} reviewable BOQ lines created.`);invalidate()},onError:(e)=>toast.push("error",e instanceof Error?e.message:"Extraction failed")});
-  const review=useMutation({mutationFn:({row,status}:{row:Row;status:"CONFIRMED"|"REJECTED"})=>api(`/v1/tenders/${tenderId}/boq/${row.id}/review`,{method:"PATCH",body:{review_status:status,material_id:draftMaterial[row.id]||row.material_id||undefined,quantity:draftQty[row.id]||undefined}}),onSuccess:()=>{toast.push("success","BOQ review saved.");invalidate()},onError:(e)=>toast.push("error",e instanceof Error?e.message:"Review failed")});
+  const review=useMutation({mutationFn:({row,status}:{row:Row;status:"CONFIRMED"|"REJECTED"})=>{if(!canReview)throw new Error("This demonstration is read-only. Sign in as an Estimator or Administrator to approve or reject BOQ lines.");return api(`/v1/tenders/${tenderId}/boq/${row.id}/review`,{method:"PATCH",body:{review_status:status,material_id:draftMaterial[row.id]||row.material_id||undefined,quantity:draftQty[row.id]||undefined}})},onSuccess:()=>{toast.push("success","BOQ review saved.");invalidate()},onError:(e)=>toast.push("error",e instanceof Error?e.message:"Review failed")});
   const snapshot=useMutation({mutationFn:()=>post(`/v1/tenders/${tenderId}/requirement-snapshots`),onSuccess:()=>{toast.push("success","Approved requirements snapshot created.");invalidate()},onError:(e)=>toast.push("error",e instanceof Error?e.message:"Snapshot failed")});
-  const bom=useMutation({mutationFn:()=>post(`/v1/tenders/${tenderId}/workflow/bom`),onSuccess:()=>{toast.push("success","Tender BOM generated from approved requirements.");invalidate()},onError:(e)=>toast.push("error",e instanceof Error?e.message:"BOM generation failed")});
+  const bom=useMutation({mutationFn:()=>{if(!canBuild)throw new Error("Your current role cannot generate a BOM. Sign in as an Administrator or Fabrication user.");return post(`/v1/tenders/${tenderId}/workflow/bom`)},onSuccess:()=>{toast.push("success","Tender BOM generated from approved requirements.");invalidate()},onError:(e)=>toast.push("error",e instanceof Error?e.message:"BOM generation failed")});
+  React.useEffect(()=>{if(!boq.data)return;setDraftQty(current=>{let changed=false;const next={...current};for(const row of boq.data){if(next[row.id]===undefined){next[row.id]=editableQty(row.quantity);changed=true;}}return changed?next:current;});},[boq.data]);
   if(docs.isLoading||boq.isLoading)return <Skeleton className="h-72 w-full"/>;
   if(docs.error||boq.error)return <ErrorState error={docs.error??boq.error!} onRetry={()=>{docs.refetch();boq.refetch();}}/>;
   const rows=boq.data??[], pending=rows.filter(row=>row.review_status==="PENDING"), confirmed=rows.filter(row=>row.review_status==="CONFIRMED"), rejected=rows.filter(row=>row.review_status==="REJECTED");
