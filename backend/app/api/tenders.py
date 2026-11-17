@@ -1,5 +1,6 @@
 import os
 import hashlib
+import logging
 import uuid as uuid_mod
 import zipfile
 from io import BytesIO
@@ -41,11 +42,23 @@ from app.calc.finance import ZERO, cost_estimate_total, q_money, q_qty, tender_c
 
 router = APIRouter(prefix="/tenders", tags=["tenders"])
 settings = get_settings()
+log = logging.getLogger(__name__)
 
 TENDER_DOCUMENT_TYPES = {
     ".pdf": {"application/pdf"},
     ".xlsx": {"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"},
 }
+
+
+def _queue_document_extraction(*, tender_id: UUID, document_id: UUID) -> None:
+    """Queue the same persisted extraction service used by the manual retry.
+
+    Upload must remain durable even when the broker is temporarily unavailable.
+    The caller records PENDING in that case, exposing the existing retry action
+    instead of claiming that extraction happened.
+    """
+    from app.worker import extract_tender_document_task
+    extract_tender_document_task.delay(str(tender_id), str(document_id))
 
 
 def _validate_tender_document(file_name: str, content: bytes) -> str:
@@ -1457,7 +1470,7 @@ async def upload_document(tender_id: UUID, file: UploadFile = File(...),
         doc = TenderDocument(
             organization_id=ctx.org_id, tender_id=t.id, file_name=safe_name,
             storage_key=storage_key, mime_type=next(iter(TENDER_DOCUMENT_TYPES[extension])), size_bytes=len(content),
-            status="UPLOADED", processing_status="PENDING", uploaded_by=ctx.user_id)
+            status="EXTRACTING", processing_status="QUEUED", uploaded_by=ctx.user_id)
         ctx.db.add(doc)
         ctx.db.flush()
         if profile is not None:
@@ -1478,8 +1491,17 @@ async def upload_document(tender_id: UUID, file: UploadFile = File(...),
             record_audit(ctx, "tender.source_provenance.manual_upload", "tender_source_provenance", provenance.id,
                          {"after": {"registry_source_id": str(profile.source.id), "classification": provenance.data_classification}})
         record_audit(ctx, "tender.upload_document", "tender_document", doc.id,
-                     {"after": {"file_name": safe_name, "size_bytes": len(content)}})
+                     {"after": {"file_name": safe_name, "size_bytes": len(content), "extraction": "QUEUED"}})
         ctx.db.commit()
+        try:
+            _queue_document_extraction(tender_id=t.id, document_id=doc.id)
+        except Exception:
+            # The source document is already persisted.  Make the existing
+            # manual retry action available rather than failing or losing it.
+            log.exception("tender_document_extraction_enqueue_failed document_id=%s", doc.id)
+            doc.status = "UPLOADED"
+            doc.processing_status = "PENDING"
+            ctx.db.commit()
         return TenderDocumentOut.model_validate(doc)
     except Exception:
         ctx.db.rollback()
