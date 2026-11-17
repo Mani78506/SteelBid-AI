@@ -11,6 +11,7 @@ import os
 from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
+from types import SimpleNamespace
 from uuid import UUID
 
 from sqlalchemy import delete, select
@@ -21,6 +22,7 @@ from app.config import get_settings
 from app.models.materials import OrganizationMaterial
 from app.models.ops import AIJob
 from app.models.projects import BOQItem, ExtractionEvidence, Tender, TenderDocument
+from app.services.tender_inventory import mapping_compatibility
 
 PARSER_VERSION = "document-ai-boq-v2"
 SUPPORTED_SUFFIXES = {".pdf", ".xlsx"}
@@ -111,8 +113,15 @@ def extract_and_persist(db: Session, *, organization_id: UUID, tender_id: UUID, 
                         OrganizationMaterial.organization_id == organization_id,
                         OrganizationMaterial.form == candidate["form"],
                         OrganizationMaterial.grade == candidate["grade"],
+                        OrganizationMaterial.base_unit == candidate["unit"],
                     ).limit(1))
-                    material_id = material.id if material else None
+                    requirement = SimpleNamespace(form=candidate["form"], grade=candidate["grade"],
+                                                  unit=candidate["unit"], specification=candidate["specification"])
+                    # Form/grade alone is never enough: an ISMB 300 must not be
+                    # silently mapped to an ISMB 200, for example.  Leave the
+                    # candidate unmapped for human review when compatibility is
+                    # not exact under the same rule used by BOM/inventory.
+                    material_id = material.id if material and not mapping_compatibility(material, requirement) else None
                 boq = BOQItem(
                     organization_id=organization_id, tender_id=tender_id, tender_document_id=document.id,
                     line_no=str(total + 1), raw_description=candidate["raw_description"], form=candidate["form"],

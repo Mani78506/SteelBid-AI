@@ -57,6 +57,15 @@ def test_material_mapping_rejects_grade_specification_and_unit_mismatch():
     assert "dimensions mismatch" in reasons
 
 
+def test_material_mapping_accepts_extracted_dimension_tokens_only_when_they_match():
+    material = SimpleNamespace(form="BEAM", grade="E250", base_unit="MT", standard="IS 2062", specification={"dimensions": "300 mm"})
+    matching = SimpleNamespace(form="BEAM", grade="E250", unit="MT", specification={"standard": "IS 2062", "dimensions": ["300 mm"]})
+    mismatched = SimpleNamespace(form="BEAM", grade="E250", unit="MT", specification={"standard": "IS 2062", "dimensions": ["200 mm"]})
+
+    assert mapping_compatibility(material, matching) == []
+    assert "dimensions mismatch" in mapping_compatibility(material, mismatched)
+
+
 def test_enhanced_contract_accepts_null_unavailable_financials_without_zero_substitution():
     payload = {
         "organization": {}, "kpis": {}, "priorities": [], "recent_inquiries": [],

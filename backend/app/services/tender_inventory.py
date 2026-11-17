@@ -81,7 +81,13 @@ def mapping_compatibility(material: OrganizationMaterial, requirement: TenderReq
         reasons.append(f"standard mismatch ({required_standard} vs {material.standard})")
     required_dimensions = specification.get("dimensions") or specification.get("size")
     actual_dimensions = (material.specification or {}).get("dimensions") or (material.specification or {}).get("size")
-    if required_dimensions and actual_dimensions and str(required_dimensions).upper() != str(actual_dimensions).upper():
+    # Extractors may preserve several dimension tokens as a list while the
+    # catalogue stores a single string.  Compare normalized content, rather
+    # than Python's list representation, before declaring a mismatch.
+    def normalized_dimension(value: object) -> str:
+        values = value if isinstance(value, (list, tuple)) else [value]
+        return " ".join(str(part).upper().replace(" ", "") for part in values if part is not None)
+    if required_dimensions and actual_dimensions and normalized_dimension(required_dimensions) != normalized_dimension(actual_dimensions):
         reasons.append("dimensions mismatch")
     return reasons
 
