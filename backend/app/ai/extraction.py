@@ -39,6 +39,7 @@ STANDARD_PATTERN = re.compile(r"\bIS\s?\d{3,5}\b", re.I)
 # as layout, not part of the business value.
 QTY_PATTERN = re.compile(r"(\d[\d,]*(?:\.\d+)?)\s*(?:\|\s*)?(MT|KG|TON(?:NE)?S?|NOS?|PCS|SQ\.?\s*M(?:TR)?|SQM|M2)\b", re.I)
 DIM_PATTERN = re.compile(r"(\d+(?:\.\d+)?\s?(?:mm|x\s?\d+(?:\.\d+)?\s?mm)+)", re.I)
+NON_REQUIREMENT_PATTERN = re.compile(r"\b(grand total|sub\s*total|total amount|rate\s*(?:per|/)|amount|gst|tax|freight|terms?\s*(?:and|&)?\s*conditions?)\b", re.I)
 UNIT_NORMALIZE = {"TON": "MT", "TONS": "MT", "TONNE": "MT", "TONNES": "MT",
                   "NO": "NOS", "NOS": "NOS", "PC": "NOS", "PCS": "NOS",
                   "MT": "MT", "KG": "KG", "SQM": "SQM", "SQ M": "SQM", "SQ.M": "SQM", "M2": "SQM"}
@@ -97,10 +98,37 @@ def extract_text_pages(document_path: str) -> list[tuple[int, str]]:
         return pages
 
 
+def boq_relevant_context(text: str, *, max_chars: int = 14000) -> str:
+    """Return only the requirement-bearing part of a source page.
+
+    PDFs often contain tender terms, cover letters, rates and commercial totals.
+    Those are source evidence but are not BOQ requirements, and must never become
+    an LLM prompt merely because they share a page with a material table.  We keep
+    a one-line neighbourhood around each material/quantity signal so split table
+    rows retain their description and unit context.
+    """
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    selected: set[int] = set()
+    for index, line in enumerate(lines):
+        quantity = QTY_PATTERN.search(line)
+        has_material_signal = any(re.search(pattern, line, re.I) for _, pattern in FORM_PATTERNS)
+        has_spec_signal = bool(GRADE_PATTERN.search(line) or STANDARD_PATTERN.search(line))
+        is_requirement = bool(quantity and not NON_REQUIREMENT_PATTERN.search(line) and (has_material_signal or has_spec_signal))
+        if is_requirement:
+            selected.update(range(max(0, index - 1), min(len(lines), index + 2)))
+
+    if not selected:
+        return ""
+    # Preserve document order and make the limit deterministic.  A truncated
+    # snippet is still source text, never a fabricated summary.
+    context = "\n".join(lines[index] for index in sorted(selected) if not NON_REQUIREMENT_PATTERN.search(lines[index]))
+    return context[:max_chars]
+
+
 def parse_boq_lines(text: str) -> list[dict]:
-    """Rule-based BOQ candidate extraction from one page of text."""
+    """Rule-based extraction of only material requirement lines from one page."""
     candidates = []
-    for raw_line in text.splitlines():
+    for raw_line in boq_relevant_context(text).splitlines():
         line = raw_line.strip()
         if len(line) < 12:
             continue
@@ -122,6 +150,8 @@ def parse_boq_lines(text: str) -> list[dict]:
                 break
         grade_match = GRADE_PATTERN.search(line)
         standard_match = STANDARD_PATTERN.search(line)
+        if NON_REQUIREMENT_PATTERN.search(line) or not (form or grade_match or standard_match):
+            continue
         dims = DIM_PATTERN.findall(line)
         candidates.append({
             "raw_description": line[:500],
@@ -141,7 +171,9 @@ Return JSON only: {\"candidates\":[...]}. Preserve original order. Each candidat
 raw_description, form or null, grade or null, standard or null, dimensions or null,
 quantity as a decimal string, unit (MT, KG, NOS, SQM), confidence (0..1), and warnings.
 Only report values present in the input. Never infer a quantity, unit, grade, material
-mapping, price, or approval. Exclude headings, totals, rates, and ambiguous values."""
+mapping, price, or approval. Exclude headings, totals, rates, commercial terms and
+ambiguous values. The supplied text is already a filtered BOQ/table excerpt, not the
+entire document; do not attempt to reconstruct omitted content."""
 
 
 def _json_payload(content: str) -> object:
@@ -185,20 +217,28 @@ def _normalize_ai_candidate(value: object) -> dict | None:
 
 
 def extract_boq_candidates(text: str) -> tuple[list[dict], str, list[str]]:
-    """Extract review-only candidates through an opt-in LLM, with safe fallback."""
+    """Extract review-only candidates from filtered BOQ context.
+
+    Local filtering is intentional: a model receives only likely requirement rows,
+    never an entire tender page.  The original document remains stored separately
+    for evidence and human review.
+    """
+    context = boq_relevant_context(text)
+    if not context:
+        return [], "rule-based", ["No material requirement rows were found in this source page."]
     provider = get_provider()
     if provider.name == "mock-deterministic":
-        return parse_boq_lines(text), "rule-based", []
+        return parse_boq_lines(context), "rule-based", []
     try:
-        payload = _json_payload(provider.complete(_AI_SYSTEM_PROMPT, "TENDER PAGE TEXT:\n" + text[:45000]))
+        payload = _json_payload(provider.complete(_AI_SYSTEM_PROMPT, "FILTERED BOQ TABLE EXCERPT:\n" + context))
         values = payload.get("candidates", []) if isinstance(payload, dict) else []
         candidates = [candidate for candidate in (_normalize_ai_candidate(value) for value in values) if candidate]
         if candidates:
             return candidates, "ai-structured", []
-        return parse_boq_lines(text), "rule-based-fallback", ["AI returned no valid BOQ candidates; rule-based fallback used."]
+        return parse_boq_lines(context), "rule-based-fallback", ["AI returned no valid BOQ candidates; rule-based fallback used."]
     except Exception:
         # A remote-model outage cannot create invented records or block a valid upload.
-        return parse_boq_lines(text), "rule-based-fallback", ["AI extraction was unavailable; rule-based fallback used."]
+        return parse_boq_lines(context), "rule-based-fallback", ["AI extraction was unavailable; rule-based fallback used."]
 
 
 def detect_injection_warnings(text: str) -> list[str]:

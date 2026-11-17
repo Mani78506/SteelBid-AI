@@ -22,7 +22,7 @@ from app.models.materials import OrganizationMaterial
 from app.models.ops import AIJob
 from app.models.projects import BOQItem, ExtractionEvidence, Tender, TenderDocument
 
-PARSER_VERSION = "document-ai-boq-v1"
+PARSER_VERSION = "document-ai-boq-v2"
 SUPPORTED_SUFFIXES = {".pdf", ".xlsx"}
 
 
