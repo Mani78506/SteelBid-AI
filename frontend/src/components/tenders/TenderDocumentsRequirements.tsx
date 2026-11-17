@@ -16,6 +16,9 @@ const dataKeys = ["workspace-documents", "workspace-boq", "workspace-evidence", 
 const qty = (value: string | null) => value === null || value === "" ? "" : Number.isFinite(Number(value)) ? String(Number(value)) : value;
 const details = (value: Record<string, unknown>) => [value.standard, value.dimensions ?? value.size].filter(Boolean).flatMap(item => Array.isArray(item) ? item : [item]).join(" · ");
 const normalized = (value: unknown) => (Array.isArray(value) ? value : [value]).filter(item => item !== null && item !== undefined).map(item => String(item).toUpperCase().replaceAll(" ", "")).join(" ");
+// Older extracted TMT lines did not persist a form.  This is not a material
+// substitution: TMT/reinforcement bar is the canonical REBAR material form.
+const catalogueForm = (row: Row) => row.form ?? (/\b(tmt|rebars?|reinforcement bars?)\b/i.test(row.raw_description) ? "REBAR" : null);
 
 function mappingReasons(row: Row, material: Material | undefined) {
   if (!material) return ["no material selected"];
@@ -52,13 +55,14 @@ function ReviewCard({ row, materials, evidence, writable, canManageMaterials, bu
   const selectedReasons = mappingReasons(row, selected);
   const validMapping = !!materialId && selectedReasons.length === 0;
   const options = selected && !exact.some(item => item.id === selected.id) ? [selected, ...exact] : exact;
-  const canCreateExact = canManageMaterials && !!row.form && !!row.grade && !!row.unit && !rejected;
+  const createForm = catalogueForm(row);
+  const canCreateExact = canManageMaterials && !!createForm && !!row.grade && !!row.unit && !rejected;
   const requiresCorrection = !rejected && !validMapping;
 
   return <Card className={`overflow-hidden border-l-4 ${rejected ? "border-l-rose-500" : validMapping ? "border-l-emerald-500" : "border-l-amber-400"}`}>
     <CardContent className="p-3">
       <div className="flex items-start justify-between gap-2">
-        <div className="min-w-0"><p className="line-clamp-2 text-sm font-semibold leading-snug text-slate-900">{row.raw_description}</p><div className="mt-1.5 flex flex-wrap gap-1">{row.form && <Badge value={row.form} />}<Badge value={row.grade ?? "GRADE MISSING"} />{row.unit && <Badge value={row.unit} />}</div></div>
+        <div className="min-w-0"><p className="line-clamp-2 text-sm font-semibold leading-snug text-slate-900">{row.raw_description}</p><div className="mt-1.5 flex flex-wrap gap-1">{createForm && <Badge value={createForm} />}<Badge value={row.grade ?? "GRADE MISSING"} />{row.unit && <Badge value={row.unit} />}</div></div>
         <Badge value={row.review_status} />
       </div>
       <div className="mt-3 flex items-end justify-between rounded-lg bg-slate-50 px-2.5 py-1.5"><div><p className="text-[9px] font-bold uppercase tracking-wide text-slate-500">Quantity</p>{pending ? <Input aria-label={`Quantity for ${row.raw_description}`} className="mt-0.5 h-7 w-24 bg-white text-base font-bold" value={quantity} disabled={!writable} onChange={event => setQuantity(event.target.value)} /> : <b className="mt-0.5 block text-xl text-slate-950">{quantity || "—"}</b>}</div><b className="pb-1 text-xs text-slate-600">{row.unit ?? "Unit missing"}</b></div>
@@ -89,9 +93,10 @@ export function TenderDocumentsRequirements({ tenderId, section }: { tenderId: s
   const review = useMutation({ mutationFn: ({ row, status, materialId, quantity }: { row: Row; status: "CONFIRMED" | "REJECTED"; materialId?: string; quantity?: string }) => { if (!canReview) throw new Error("This demonstration is read-only. Sign in as an Estimator or Administrator to review BOQ lines."); return api(`/v1/tenders/${tenderId}/boq/${row.id}/review`, { method: "PATCH", body: { review_status: status, material_id: materialId, quantity } }); }, onSuccess: () => { toast.push("success", "BOQ line saved."); invalidate(); }, onError: error => toast.push("error", error instanceof Error ? error.message : "Review failed") });
   const createExact = useMutation({ mutationFn: async (row: Row) => {
     if (!canManageMaterials) throw new Error("A Materials administrator is required to add this catalogue item.");
-    if (!row.form || !row.grade || !row.unit) throw new Error("Form, grade and unit must be reviewed before creating a catalogue material.");
+    const form = catalogueForm(row);
+    if (!form || !row.grade || !row.unit) throw new Error("Form, grade and unit must be reviewed before creating a catalogue material.");
     const specification = { ...row.specification };
-    const material = await post<Material>("/v1/materials", { sku: `TENDER-${row.id.replaceAll("-", "").slice(0, 12).toUpperCase()}`, name: row.raw_description.slice(0, 255), form: row.form, grade: row.grade, standard: typeof specification.standard === "string" ? specification.standard : undefined, base_unit: row.unit, specification });
+    const material = await post<Material>("/v1/materials", { sku: `TENDER-${row.id.replaceAll("-", "").slice(0, 12).toUpperCase()}`, name: row.raw_description.slice(0, 255), form, grade: row.grade, standard: typeof specification.standard === "string" ? specification.standard : undefined, base_unit: row.unit, specification });
     await api(`/v1/tenders/${tenderId}/boq/${row.id}/review`, { method: "PATCH", body: { review_status: "CONFIRMED", material_id: material.id } });
     return material;
   }, onSuccess: () => { toast.push("success", "Exact catalogue material created and mapped."); qc.invalidateQueries({ queryKey: ["workspace-materials"] }); invalidate(); }, onError: error => toast.push("error", error instanceof Error ? error.message : "Material creation failed") });
