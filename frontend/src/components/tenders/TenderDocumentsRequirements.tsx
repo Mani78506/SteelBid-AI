@@ -111,6 +111,16 @@ export function TenderDocumentsRequirements({ tenderId, section }: { tenderId: s
   const workflow = useQuery({ queryKey: ["tender-workflow", tenderId], queryFn: () => get<{ bom_version_id?: string | null }>(`/v1/tenders/${tenderId}/workflow`) });
   const bom = useQuery({ queryKey: ["workspace-bom", workflow.data?.bom_version_id], enabled: !!workflow.data?.bom_version_id, queryFn: () => get<BOM>(`/v1/fabrication/boms/${workflow.data?.bom_version_id}`) });
   const materials = useQuery({ queryKey: ["workspace-materials"], queryFn: () => get<Page<Material>>("/v1/materials?page_size=100") });
+  React.useEffect(() => {
+    const processing = (docs.data ?? []).some(doc => ["UPLOADED", "EXTRACTING"].includes(doc.status));
+    if (!processing) return;
+    const timer = window.setInterval(() => {
+      docs.refetch();
+      boq.refetch();
+      evidence.refetch();
+    }, 2500);
+    return () => window.clearInterval(timer);
+  }, [docs.data, docs.refetch, boq.refetch, evidence.refetch]);
   const upload = useMutation({ mutationFn: (file: File) => apiUpload<Doc>(`/v1/tenders/${tenderId}/documents`, file), onSuccess: () => { toast.push("success", "Tender source uploaded. AI extraction is queued."); invalidate(); }, onError: error => toast.push("error", error instanceof Error ? error.message : "Upload failed") });
   const extract = useMutation({ mutationFn: (id: string) => post(`/v1/tenders/${tenderId}/documents/${id}/extract`), onSuccess: () => { toast.push("success", "Extraction queued."); invalidate(); }, onError: error => toast.push("error", error instanceof Error ? error.message : "Extraction failed") });
   const review = useMutation({ mutationFn: ({ row, status, materialId, quantity }: { row: Row; status: "CONFIRMED" | "REJECTED"; materialId?: string; quantity?: string }) => { if (!canReview) throw new Error("This demonstration is read-only. Sign in as an Estimator or Administrator to review BOQ lines."); return api(`/v1/tenders/${tenderId}/boq/${row.id}/review`, { method: "PATCH", body: { review_status: status, material_id: materialId, quantity } }); }, onSuccess: () => { toast.push("success", "BOQ line saved."); invalidate(); }, onError: error => toast.push("error", error instanceof Error ? error.message : "Review failed") });
