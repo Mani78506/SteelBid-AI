@@ -40,11 +40,14 @@ class Settings(BaseSettings):
     public_demo_viewer_email: str = "viewer@apex.demo"
     demo_viewer_email: str = "viewer@apex.demo"
 
-    # Pluggable LLM provider: "mock" (deterministic, offline) | "openai-compatible"
+    # Pluggable LLM provider: "mock" (deterministic, offline),
+    # "openai-compatible", or "gemini".  Credentials remain environment-only.
     llm_provider: str = "mock"
     llm_base_url: str = ""
     llm_api_key: str = ""
     llm_model: str = ""
+    gemini_api_key: str = Field(default="", validation_alias=AliasChoices("GEMINI_API_KEY", "GOOGLE_API_KEY"))
+    gemini_model: str = "gemini-2.5-flash"
 
     s3_endpoint_url: str = ""
     s3_bucket: str = "steelbid-documents"
