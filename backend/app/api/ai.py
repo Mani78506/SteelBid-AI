@@ -17,6 +17,24 @@ from app.schemas.ops import AIJobOut, CopilotIn, ExplainIn
 router = APIRouter(prefix="/ai", tags=["ai"])
 
 
+@router.get("/provider-status")
+def provider_status(ctx: TenantContext = Depends(require("read"))):
+    """Expose non-secret AI runtime status for the tender workspace.
+
+    This deliberately returns no credential, endpoint, or configuration value.
+    It lets operators distinguish live structured extraction from the safe local
+    deterministic fallback before uploading a tender.
+    """
+    provider = get_provider()
+    live = provider.name != "mock-deterministic"
+    return {
+        "provider": provider.name,
+        "mode": "LIVE_STRUCTURED" if live else "DETERMINISTIC_FALLBACK",
+        "credentials_configured": live,
+        "human_review_required": True,
+    }
+
+
 @router.post("/explain")
 def explain(body: ExplainIn, ctx: TenantContext = Depends(require("ai:use"))):
     """Grounded explanations over real records. Recorded as an AI job for traceability."""
